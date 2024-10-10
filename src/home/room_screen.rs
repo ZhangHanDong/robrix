@@ -38,6 +38,8 @@ use crate::{
 };
 use rangemap::RangeSet;
 
+mod collapse_small_state;
+
 live_design! {
     import makepad_draw::shader::std::*;
     import makepad_widgets::base::*;
@@ -51,6 +53,7 @@ live_design! {
     import crate::shared::html_or_plaintext::*;
     import crate::profile::user_profile::UserProfileSlidingPane;
     import crate::shared::typing_animation::TypingAnimation;
+    import crate::shared::collapse_view::GCollapse;
 
     IMG_DEFAULT_AVATAR = dep("crate://self/resources/img/default_avatar.png")
     ICO_FAV = dep("crate://self/resources/icon_favorite.svg")
@@ -723,6 +726,8 @@ live_design! {
                 color: (COLOR_PRIMARY_DARKER)
             }
 
+
+
             <KeyboardView> {
                 width: Fill, height: Fill,
                 flow: Down,
@@ -730,7 +735,8 @@ live_design! {
                 top_space = <TopSpace> { }
 
                 // First, display the timeline of all messages/events.
-                timeline = <Timeline> {}
+                timeline = <Timeline> {
+                }
 
 
 
@@ -943,6 +949,7 @@ struct RoomScreen {
     #[rust] tl_state: Option<TimelineUiState>,
     /// 5 secs timer when scroll ends
     #[rust] fully_read_timer: Timer,
+
 }
 
 impl RoomScreen{
@@ -957,13 +964,13 @@ impl RoomScreen{
             return;
         }
         let first_index = portal_list.first_id();
-        
+
         let Some(tl_state) = self.tl_state.as_mut() else { return };
         let Some(room_id) = self.room_id.as_ref() else { return };
         if let Some(ref mut index) = tl_state.prev_first_index {
             // to detect change of scroll when scroll ends
-            if *index != first_index {  
-                // scroll changed         
+            if *index != first_index {
+                // scroll changed
                 self.fully_read_timer = cx.start_interval(5.0);
                 let time_now = std::time::Instant::now();
                 if first_index > *index {
@@ -1289,7 +1296,6 @@ impl Widget for RoomScreen {
 
     fn draw_walk(&mut self, cx: &mut Cx2d, scope: &mut Scope, walk: Walk) -> DrawStep {
         while let Some(subview) = self.view.draw_walk(cx, scope, walk).step() {
-            // We only care about drawing the portal list.
             let portal_list_ref = subview.as_portal_list();
             let Some(mut list_ref) = portal_list_ref.borrow_mut() else {
                 error!("!!! RoomScreen::draw_walk(): BUG: expected a PortalList widget, but got something else");
@@ -1298,121 +1304,138 @@ impl Widget for RoomScreen {
             let Some(tl_state) = self.tl_state.as_mut() else {
                 return DrawStep::done();
             };
-            let room_id = &tl_state.room_id;
-            let tl_items = &tl_state.items;
 
-            // Set the portal list's range based on the number of timeline items.
-            let last_item_id = tl_items.len();
-
-            let list = list_ref.deref_mut();
-            list.set_item_range(cx, 0, last_item_id);
-
-            while let Some(item_id) = list.next_visible_item(cx) {
-                let item = {
-                    let tl_idx = item_id as usize;
-                    let Some(timeline_item) = tl_items.get(tl_idx) else {
-                        // This shouldn't happen (unless the timeline gets corrupted or some other weird error),
-                        // but we can always safely fill the item with an empty widget that takes up no space.
-                        list.item(cx, item_id, live_id!(Empty)).unwrap();
-                        continue;
-                    };
-
-                    // Determine whether this item's content and profile have been drawn since the last update.
-                    // Pass this state to each of the `populate_*` functions so they can attempt to re-use
-                    // an item in the timeline's portallist that was previously populated, if one exists.
-                    let item_drawn_status = ItemDrawnStatus {
-                        content_drawn: tl_state.content_drawn_since_last_update.contains(&tl_idx),
-                        profile_drawn: tl_state.profile_drawn_since_last_update.contains(&tl_idx),
-                    };
-
-                    let (item, item_new_draw_status) = match timeline_item.kind() {
-                        TimelineItemKind::Event(event_tl_item) => match event_tl_item.content() {
-                            TimelineItemContent::Message(message) => {
-                                let prev_event = tl_items.get(tl_idx.saturating_sub(1));
-                                populate_message_view(
-                                    cx,
-                                    list,
-                                    item_id,
-                                    room_id,
-                                    event_tl_item,
-                                    message,
-                                    prev_event,
-                                    &mut tl_state.media_cache,
-                                    item_drawn_status,
-                                )
-                            }
-                            TimelineItemContent::RedactedMessage => populate_small_state_event(
-                                cx,
-                                list,
-                                item_id,
-                                room_id,
-                                event_tl_item,
-                                &RedactedMessageEventMarker,
-                                item_drawn_status,
-                            ),
-                            TimelineItemContent::MembershipChange(membership_change) => populate_small_state_event(
-                                cx,
-                                list,
-                                item_id,
-                                room_id,
-                                event_tl_item,
-                                membership_change,
-                                item_drawn_status,
-                            ),
-                            TimelineItemContent::ProfileChange(profile_change) => populate_small_state_event(
-                                cx,
-                                list,
-                                item_id,
-                                room_id,
-                                event_tl_item,
-                                profile_change,
-                                item_drawn_status,
-                            ),
-                            TimelineItemContent::OtherState(other) => populate_small_state_event(
-                                cx,
-                                list,
-                                item_id,
-                                room_id,
-                                event_tl_item,
-                                other,
-                                item_drawn_status,
-                            ),
-                            unhandled => {
-                                let item = list.item(cx, item_id, live_id!(SmallStateEvent)).unwrap();
-                                item.label(id!(content)).set_text(&format!("[TODO] {:?}", unhandled));
-                                (item, ItemDrawnStatus::both_drawn())
-                            }
-                        }
-                        TimelineItemKind::Virtual(VirtualTimelineItem::DayDivider(millis)) => {
-                            let item = list.item(cx, item_id, live_id!(DayDivider)).unwrap();
-                            let text = unix_time_millis_to_datetime(&millis)
-                                // format the time as a shortened date (Sat, Sept 5, 2021)
-                                .map(|dt| format!("{}", dt.date_naive().format("%a %b %-d, %Y")))
-                                .unwrap_or_else(|| format!("{:?}", millis));
-                            item.label(id!(date)).set_text(&text);
-                            (item, ItemDrawnStatus::both_drawn())
-                        }
-                        TimelineItemKind::Virtual(VirtualTimelineItem::ReadMarker) => {
-                            let item = list.item(cx, item_id, live_id!(ReadMarker)).unwrap();
-                            (item, ItemDrawnStatus::both_drawn())
-                        }
-                    };
-
-                    // Now that we've drawn the item, add its index to the set of drawn items.
-                    if item_new_draw_status.content_drawn {
-                        tl_state.content_drawn_since_last_update.insert(tl_idx .. tl_idx + 1);
-                    }
-                    if item_new_draw_status.profile_drawn {
-                        tl_state.profile_drawn_since_last_update.insert(tl_idx .. tl_idx + 1);
-                    }
-                    item
-                };
-                item.draw_all(cx, &mut Scope::empty());
-            }
+            Self::draw_timeline(cx, list_ref.deref_mut(), tl_state);
         }
-
         DrawStep::done()
     }
+
+    // fn draw_walk(&mut self, cx: &mut Cx2d, scope: &mut Scope, walk: Walk) -> DrawStep {
+    //     while let Some(subview) = self.view.draw_walk(cx, scope, walk).step() {
+    //         // We only care about drawing the portal list.
+    //         let portal_list_ref = subview.as_portal_list();
+    //         let Some(mut list_ref) = portal_list_ref.borrow_mut() else {
+    //             error!("!!! RoomScreen::draw_walk(): BUG: expected a PortalList widget, but got something else");
+    //             continue;
+    //         };
+    //         let Some(tl_state) = self.tl_state.as_mut() else {
+    //             return DrawStep::done();
+    //         };
+    //         let room_id = &tl_state.room_id;
+    //         let tl_items = &tl_state.items;
+
+    //         // Set the portal list's range based on the number of timeline items.
+    //         let last_item_id = tl_items.len();
+
+    //         let list = list_ref.deref_mut();
+    //         list.set_item_range(cx, 0, last_item_id);
+
+    //         while let Some(item_id) = list.next_visible_item(cx) {
+    //             let item = {
+    //                 let tl_idx = item_id as usize;
+    //                 let Some(timeline_item) = tl_items.get(tl_idx) else {
+    //                     // This shouldn't happen (unless the timeline gets corrupted or some other weird error),
+    //                     // but we can always safely fill the item with an empty widget that takes up no space.
+    //                     list.item(cx, item_id, live_id!(Empty)).unwrap();
+    //                     continue;
+    //                 };
+
+    //                 // Determine whether this item's content and profile have been drawn since the last update.
+    //                 // Pass this state to each of the `populate_*` functions so they can attempt to re-use
+    //                 // an item in the timeline's portallist that was previously populated, if one exists.
+    //                 let item_drawn_status = ItemDrawnStatus {
+    //                     content_drawn: tl_state.content_drawn_since_last_update.contains(&tl_idx),
+    //                     profile_drawn: tl_state.profile_drawn_since_last_update.contains(&tl_idx),
+    //                 };
+
+    //                 let (item, item_new_draw_status) = match timeline_item.kind() {
+    //                     TimelineItemKind::Event(event_tl_item) => match event_tl_item.content() {
+    //                         TimelineItemContent::Message(message) => {
+    //                             let prev_event = tl_items.get(tl_idx.saturating_sub(1));
+    //                             populate_message_view(
+    //                                 cx,
+    //                                 list,
+    //                                 item_id,
+    //                                 room_id,
+    //                                 event_tl_item,
+    //                                 message,
+    //                                 prev_event,
+    //                                 &mut tl_state.media_cache,
+    //                                 item_drawn_status,
+    //                             )
+    //                         }
+    //                         TimelineItemContent::RedactedMessage => populate_small_state_event(
+    //                             cx,
+    //                             list,
+    //                             item_id,
+    //                             room_id,
+    //                             event_tl_item,
+    //                             &RedactedMessageEventMarker,
+    //                             item_drawn_status,
+    //                         ),
+    //                         TimelineItemContent::MembershipChange(membership_change) => populate_small_state_event(
+    //                             cx,
+    //                             list,
+    //                             item_id,
+    //                             room_id,
+    //                             event_tl_item,
+    //                             membership_change,
+    //                             item_drawn_status,
+    //                         ),
+    //                         TimelineItemContent::ProfileChange(profile_change) => populate_small_state_event(
+    //                             cx,
+    //                             list,
+    //                             item_id,
+    //                             room_id,
+    //                             event_tl_item,
+    //                             profile_change,
+    //                             item_drawn_status,
+    //                         ),
+    //                         TimelineItemContent::OtherState(other) => populate_small_state_event(
+    //                             cx,
+    //                             list,
+    //                             item_id,
+    //                             room_id,
+    //                             event_tl_item,
+    //                             other,
+    //                             item_drawn_status,
+    //                         ),
+    //                         unhandled => {
+    //                             let item = list.item(cx, item_id, live_id!(SmallStateEvent)).unwrap();
+    //                             item.label(id!(content)).set_text(&format!("[TODO] {:?}", unhandled));
+    //                             (item, ItemDrawnStatus::both_drawn())
+    //                         }
+    //                     }
+    //                     TimelineItemKind::Virtual(VirtualTimelineItem::DayDivider(millis)) => {
+    //                         let item = list.item(cx, item_id, live_id!(DayDivider)).unwrap();
+    //                         let text = unix_time_millis_to_datetime(&millis)
+    //                             // format the time as a shortened date (Sat, Sept 5, 2021)
+    //                             .map(|dt| format!("{}", dt.date_naive().format("%a %b %-d, %Y")))
+    //                             .unwrap_or_else(|| format!("{:?}", millis));
+    //                         item.label(id!(date)).set_text(&text);
+    //                         (item, ItemDrawnStatus::both_drawn())
+    //                     }
+    //                     TimelineItemKind::Virtual(VirtualTimelineItem::ReadMarker) => {
+    //                         let item = list.item(cx, item_id, live_id!(ReadMarker)).unwrap();
+    //                         (item, ItemDrawnStatus::both_drawn())
+    //                     }
+    //                 };
+
+    //                 // Now that we've drawn the item, add its index to the set of drawn items.
+    //                 if item_new_draw_status.content_drawn {
+    //                     tl_state.content_drawn_since_last_update.insert(tl_idx .. tl_idx + 1);
+    //                 }
+    //                 if item_new_draw_status.profile_drawn {
+    //                     tl_state.profile_drawn_since_last_update.insert(tl_idx .. tl_idx + 1);
+    //                 }
+    //                 item
+    //             };
+    //             item.draw_all(cx, &mut Scope::empty());
+    //         }
+    //     }
+
+    //     DrawStep::done()
+    // }
 }
 
 impl RoomScreen {
@@ -1710,7 +1733,7 @@ impl RoomScreen {
         if first_time_showing_room {
             self.process_timeline_updates(cx);
         }
-    
+
         self.redraw(cx);
     }
 
