@@ -9,7 +9,7 @@ pub mod rooms_list;
 pub mod rooms_sidebar;
 pub mod spaces_dock;
 pub mod welcome_screen;
-pub mod light_themed_dock;  
+pub mod light_themed_dock;
 
 pub fn live_design(cx: &mut Cx) {
     home_screen::live_design(cx);
@@ -22,4 +22,5 @@ pub fn live_design(cx: &mut Cx) {
     spaces_dock::live_design(cx);
     welcome_screen::live_design(cx);
     light_themed_dock::live_design(cx);
+    // room_screen::small_event::live_design(cx);
 }

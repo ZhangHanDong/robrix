@@ -37,6 +37,8 @@ use crate::{
 };
 use rangemap::RangeSet;
 
+// pub mod small_event;
+
 const GEO_URI_SCHEME: &str = "geo:";
 
 live_design! {
@@ -2026,6 +2028,8 @@ struct TimelineUiState {
     prev_first_index: Option<usize>,
     read_event_hashmap: HashMap<String, (OwnedRoomId, OwnedEventId, Instant, bool)>,
     marked_fully_read_queue: HashMap<String, (OwnedRoomId, OwnedEventId)>,
+    // /// Small event collapsed groups
+    // collapsed_groups: Vec<CollapsedEventsGroup>,
 }
 
 /// The item index, scroll position, and optional unique IDs of the first `N` events

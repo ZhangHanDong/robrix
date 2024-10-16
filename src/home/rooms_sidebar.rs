@@ -1,4 +1,5 @@
 use makepad_widgets::*;
+use crate::{home::rooms_list::{RoomsListWidgetExt, RoomsListWidgetRefExt}, shared::collapse_view::collapse::GCollapseWidgetExt};
 
 live_design! {
     import makepad_widgets::base::*;
@@ -11,6 +12,7 @@ live_design! {
 
     import crate::home::rooms_list::RoomsList;
     import crate::shared::cached_widget::CachedWidget;
+    import crate::shared::collapse_view::GCollapse;
 
     ICON_COLLAPSE = dep("crate://self/resources/icons/collapse.svg")
     ICON_ADD = dep("crate://self/resources/icons/add.svg")
@@ -22,7 +24,7 @@ live_design! {
         collapse_icon = <Icon> {
             draw_icon: {
                 svg_file: (ICON_COLLAPSE),
-                uniform rotation_angle: -90.0,
+                uniform rotation_angle: -90.,
                 fn get_color(self) -> vec4 {
                     // return #666;
                     return (COLOR_TEXT_IDLE);
@@ -117,40 +119,86 @@ live_design! {
             flow: Down, spacing: 20
             padding: {top: 20}
             width: Fill, height: Fit
-            <CollapsableTitle> {
-                title = {
-                    text: "People"
-                    draw_text: {
-                        color: (COLOR_TEXT_IDLE)
+
+            people_collapse = <GCollapse> {
+                opened: false
+
+                header: {
+                    <CollapsableTitle> {
+                        title = {
+                            text: "People"
+                            draw_text: {
+                                color: (COLOR_TEXT_IDLE)
+                            }
+                        }
+
+                        collapse_icon = {
+                            draw_icon: { rotation_angle: -90. }
+                        }
                     }
                 }
+
             }
-            <CollapsableTitle> {
-                title = {
-                    text: "Channels"
-                    draw_text: {
-                        color: (COLOR_TEXT_IDLE)
+
+            channels_collapse = <GCollapse> {
+                opened: false
+
+                header: {
+                    <CollapsableTitle> {
+                        title = {
+                            text: "Channels"
+                            draw_text: {
+                                color: (COLOR_TEXT_IDLE)
+                            }
+                        }
+
+                        collapse_icon = {
+                            draw_icon: { rotation_angle: -90. }
+                        }
                     }
                 }
+
             }
-            <CollapsableTitle> {
-                title = {
-                    text: "Rooms"
-                    draw_text: {
-                        color: #666666
+
+            rooms_collapse = <GCollapse> {
+                height: Fit,
+                width: Fill,
+                opened: true
+
+                header: {
+                    <CollapsableTitle> {
+                        title = {
+                            text: "Rooms (3 rooms)"
+                            draw_text: {
+                                color: #666666
+                            }
+                        }
+                        collapse_icon = {
+                            draw_icon: { rotation_angle: 0. }
+                        }
+                        add_icon = {
+                            visible: true
+                        }
+
+
                     }
                 }
-                collapse_icon = {
-                    draw_icon: { rotation_angle: 0. }
-                }
-                add_icon = {
-                    visible: true
+                body : {
+                    // Fixed ME: `<CachedWidget>` dont work
+                    <View> {
+                        // FIXED ME: `height: Fit` dont work
+                        height: 350.,
+                        width: Fill,
+                        // show_bg: true,
+                        // draw_bg: {
+                        //     color: #ff0000
+                        // }
+                        rooms_list = <RoomsList> {}
+                    }
                 }
             }
         }
-        <CachedWidget> {
-            rooms_list = <RoomsList> {}
-        }
+
     }
 
     RoomsSideBar = <AdaptiveView> {
@@ -163,7 +211,7 @@ live_design! {
             padding: {top: 17., left: 17., right: 17.}
             flow: Down, spacing: 7
             width: Fill, height: Fill
-        }        
+        }
     }
 }
 
@@ -171,14 +219,93 @@ live_design! {
 pub struct RoomsView {
     #[deref]
     view: View,
+    #[rust(false)]
+    rooms_collapsed: bool,
+    #[rust]
+    room_count: usize,
 }
 
 impl Widget for RoomsView {
     fn handle_event(&mut self, cx: &mut Cx, event: &Event, scope: &mut Scope) {
+        let collapse = self.view.gcollapse(id!(rooms_collapse));
+        let header = collapse.view(id!(header));
+        let icon = header.view(id!(collapse_icon));
+        self.room_count = 0;
+
+        if let Some(collapse_inner) = collapse.borrow() {
+            self.rooms_collapsed = !collapse_inner.opened;
+            // Update room count
+            // Access the rooms_list from the collapse body
+            let rooms_list = collapse_inner.body.view(id!(rooms_list)).as_rooms_list();
+            if let Some(rooms_list) = rooms_list.borrow() {
+                self.room_count = rooms_list.rooms_count();
+            };
+
+        }
+        log!("apply =======> rooms_collapsed {:?}", self.rooms_collapsed);
+
+        match event.hits(cx, icon.area()) {
+            Hit::FingerDown(_) => {
+
+                if self.rooms_collapsed {
+                    collapse.animate_open_off(cx);
+                } else {
+                    collapse.animate_open_on(cx);
+                }
+
+                self.rooms_collapsed = !self.rooms_collapsed;
+
+                if let Some(mut collapse_inner_mut) = collapse.borrow_mut() {
+                    collapse_inner_mut.opened = !self.rooms_collapsed;
+                }
+
+                log!("apply =======> FingerDown rooms_collapsed {:?}", self.rooms_collapsed);
+                return
+            }
+            Hit::FingerHoverIn(_) => {
+                cx.set_cursor(MouseCursor::Hand);
+            }
+            Hit::FingerHoverOut(_) => {
+                cx.set_cursor(MouseCursor::Default);
+            }
+            _ => {}
+        }
         self.view.handle_event(cx, event, scope);
     }
-    
+
     fn draw_walk(&mut self, cx: &mut Cx2d, scope: &mut Scope, walk: Walk) -> DrawStep {
+        let collapse = self.view.gcollapse(id!(rooms_collapse));
+        let rotation = if self.rooms_collapsed {
+            -90.0
+        } else {
+            0.0
+        };
+
+        // let rooms_list = self.view(id!(rooms_list));
+        // let rect = rooms_list. get_rect(cx);
+        // log!("RoomsList height: {}", rect.size.y);
+
+        if let Some(collapse_inner) = collapse.borrow() {
+            // let icon = collapse.view(id!(header)).view(id!(collapse_icon));
+            log!("apply =======> rotation {:?}", self.rooms_collapsed);
+
+            collapse_inner.header.icon(id!(collapse_icon)).apply_over(cx, live! {
+                draw_icon: { rotation_angle: (rotation) }
+            });
+
+            // Update the title text before drawing
+            let title_text = format!("Rooms ({} rooms)", self.room_count);
+            collapse_inner.header.label(id!(title)).apply_over(cx, live! {
+                text: (title_text)
+            });
+        }
+
+
+
+
+
+
+        log!("apply =======> rotation {:?}", self.rooms_collapsed);
         self.view.draw_walk(cx, scope, walk)
     }
 }

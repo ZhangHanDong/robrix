@@ -18,7 +18,7 @@ live_design! {
     import crate::shared::helpers::*;
     import crate::shared::avatar::Avatar;
     import crate::shared::html_or_plaintext::HtmlOrPlaintext;
-    
+
     import crate::home::room_preview::*;
 
     // An empty view that takes up no space in the portal list.
@@ -185,6 +185,9 @@ impl RoomsList {
             format!("Loaded {} rooms.", self.all_rooms.len())
         };
     }
+    pub fn rooms_count(&self) -> usize {
+        self.all_rooms.len()
+    }
 }
 
 impl Widget for RoomsList {
@@ -279,7 +282,9 @@ impl Widget for RoomsList {
 
 
     fn draw_walk(&mut self, cx: &mut Cx2d, scope: &mut Scope, walk: Walk) -> DrawStep {
-
+        log!("RoomsList draw_walk start, all_rooms count: {}", self.all_rooms.len());
+        log!("RoomsList initial walk: {:?}", walk);
+        log!("RoomsList initial turtle state: {:?}", cx.turtle());
         // TODO: sort list of `all_rooms` by alphabetic, most recent message, grouped by spaces, etc
         let app_state = scope.data.get_mut::<AppState>().unwrap();
         // Override the current active room index if the app state has a different selected room
@@ -293,6 +298,8 @@ impl Widget for RoomsList {
 
         let count = self.all_rooms.len();
         let status_label_id = count;
+
+        let mut total_height = 0.0;
 
         // Start the actual drawing procedure.
         while let Some(list_item) = self.view.draw_walk(cx, scope, walk).step() {
@@ -324,6 +331,11 @@ impl Widget for RoomsList {
 
                     // Pass the room info through Scope down to the RoomPreview widget.
                     scope = Scope::with_props(&*room_info);
+                    let before_height = cx.turtle().used().y;
+                    item.draw_all(cx, &mut scope);
+                    let item_height = cx.turtle().used().y - before_height;
+                    total_height += item_height;
+                    log!("Room {} height: {}", item_id, item_height);
 
                     item
                 }
@@ -334,17 +346,45 @@ impl Widget for RoomsList {
                         height: Fit,
                         label = { text: (&self.status) }
                     });
+
+                    let before_height = cx.turtle().used().y;
+                    item.draw_all(cx, &mut Scope::empty());
+                    let item_height = cx.turtle().used().y - before_height;
+                    total_height += item_height;
+
                     item
                 }
                 // Draw a filler entry to take up space at the bottom of the portal list.
                 else {
-                    list.item(cx, item_id, live_id!(bottom_filler))
+                    let item = list.item(cx, item_id, live_id!(bottom_filler));
+                    let before_height = cx.turtle().used().y;
+                    item.draw_all(cx, &mut Scope::empty());
+                    let item_height = cx.turtle().used().y - before_height;
+                    total_height += item_height;
+                    item
                 };
 
                 item.draw_all(cx, &mut scope);
             }
         }
 
+
+        total_height += (self.all_rooms.len() as f64 - 1.0) * cx.turtle().layout().spacing;
+
+        log!("RoomsList total height: {}", total_height);
+
+
+        // 确保我们设置了一个最小高度
+        if total_height == 0.0 || total_height.is_nan() {
+            cx.turtle_mut().update_height_max(0.0, 100.0); // 设置一个最小高度
+            println!("RoomsList set minimum height: 100.0");
+        }
+
+        // 确保父容器知道这个新的高度
+        let current_used = cx.turtle().used();
+        cx.turtle_mut().set_used(current_used.x, total_height);
+
+        log!("RoomsList final turtle state: {:?}", cx.turtle());
         DrawStep::done()
     }
 
