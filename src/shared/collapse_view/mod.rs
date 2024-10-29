@@ -31,6 +31,9 @@ live_design! {
 
         },
         body: <View>{
+            // I think right now Collapse body only works with (Fit or Fixed) height
+            // which is a problem because PortalList does not work with Fit parent
+            // Perhaps we can find a way to make Collapse work with Fill
             height: Fit,
             width: Fill,
             padding: {left: 6.0, right: 6.0, top: 3.0, bottom: 3.0},

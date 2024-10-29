@@ -300,6 +300,7 @@ impl Widget for RoomsList {
         let status_label_id = count;
 
         let mut total_height = 0.0;
+        let room_spacing = 10.0;
 
         // Start the actual drawing procedure.
         while let Some(list_item) = self.view.draw_walk(cx, scope, walk).step() {
@@ -309,11 +310,13 @@ impl Widget for RoomsList {
 
             // Add 1 for the status label at the bottom.
             list.set_item_range(cx, 0, count + 1);
+            log!("Setting portal list range: 0 to {}", count + 1);
 
             while let Some(item_id) = list.next_visible_item(cx) {
                 let mut scope = Scope::empty();
 
                 // Draw the room preview for each room.
+                // 绘制房间预览
                 let item = if let Some(room_info) = self.all_rooms.get_mut(item_id) {
                     let item = list.item(cx, item_id, live_id!(room_preview));
                     self.rooms_list_map.insert(item.widget_uid().0, item_id);
@@ -336,7 +339,6 @@ impl Widget for RoomsList {
                     let item_height = cx.turtle().used().y - before_height;
                     total_height += item_height;
                     log!("Room {} height: {}", item_id, item_height);
-
                     item
                 }
                 // Draw the status label as the bottom entry.
@@ -346,12 +348,10 @@ impl Widget for RoomsList {
                         height: Fit,
                         label = { text: (&self.status) }
                     });
-
                     let before_height = cx.turtle().used().y;
                     item.draw_all(cx, &mut Scope::empty());
                     let item_height = cx.turtle().used().y - before_height;
                     total_height += item_height;
-
                     item
                 }
                 // Draw a filler entry to take up space at the bottom of the portal list.
@@ -368,22 +368,19 @@ impl Widget for RoomsList {
             }
         }
 
-
         total_height += (self.all_rooms.len() as f64 - 1.0) * cx.turtle().layout().spacing;
 
-        log!("RoomsList total height: {}", total_height);
-
-
-        // 确保我们设置了一个最小高度
+        // 确保最小高度
         if total_height == 0.0 || total_height.is_nan() {
-            cx.turtle_mut().update_height_max(0.0, 100.0); // 设置一个最小高度
-            println!("RoomsList set minimum height: 100.0");
+            let min_height = count.max(1) as f64 * 50.0;
+            total_height = total_height.max(min_height);
         }
 
-        // 确保父容器知道这个新的高度
-        let current_used = cx.turtle().used();
-        cx.turtle_mut().set_used(current_used.x, total_height);
+        // 更新使用的高度
+        let used = cx.turtle().used();
+        cx.turtle_mut().set_used(used.x, total_height);
 
+        log!("RoomsList final height: {}", total_height);
         log!("RoomsList final turtle state: {:?}", cx.turtle());
         DrawStep::done()
     }

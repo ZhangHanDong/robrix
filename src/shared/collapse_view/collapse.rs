@@ -91,12 +91,15 @@ impl Widget for GCollapse {
         if !self.visible {
             return DrawStep::done();
         }
-        // self.fold = self.opened.to_f32() as f64;
 
+        // 获取动画状态和折叠值
         if let Some(state) = self.animator.state.as_ref() {
             if let Some(LiveValue::Float64(fold)) = state.child_value_by_path(0, &[live_id!(tracks).as_field(), live_id!(open).as_field(), live_id!(fold).as_field()]) {
                 self.fold = *fold;
             }
+        } else {
+            // 如果没有动画状态，使用 opened 状态设置初始 fold 值
+            self.fold = self.opened.to_f32() as f64;
         }
 
         let body_walk = self.body.walk(cx);
@@ -159,16 +162,13 @@ impl Widget for GCollapse {
                 DrawCollapseState::DrawBody => {
                     log!("Body walk height: {:?}", body_walk.height);
 
-
-                    // let body_height = cx.turtle().eval_height(body_walk.height, body_walk.margin, Flow::Down);
-                    // 创建一个临时的 Cx2d 来计算 body 的高度
-
                     let mut body_height = 0.0;
 
                     cx.begin_turtle(body_walk, Layout::flow_down());
                     let _ = self.body.draw_walk(cx, scope, body_walk);
                     body_height = cx.turtle().used().y;
-                    cx.end_turtle();
+                    let body_rect = cx.end_turtle();
+                    log!("body_rect: {:?}", body_rect);
 
                     let body_height = if body_height.is_nan() { 100.0 } else { body_height };
                     log!("GCollapse DrawBody: body_height={}, fold={}", body_height, self.fold);

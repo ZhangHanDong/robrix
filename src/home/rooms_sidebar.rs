@@ -93,6 +93,7 @@ live_design! {
     }
 
     RoomsView = {{RoomsView}} {
+        width: Fill, height: Fill,
         show_bg: true,
         draw_bg: {
             instance bg_color: (COLOR_PRIMARY)
@@ -118,9 +119,11 @@ live_design! {
         <View> {
             flow: Down, spacing: 20
             padding: {top: 20}
-            width: Fill, height: Fit
+            width: Fill, height: Fill
 
             people_collapse = <GCollapse> {
+                width: Fill,
+                height: Fit,
                 opened: false
 
                 header: {
@@ -141,6 +144,8 @@ live_design! {
             }
 
             channels_collapse = <GCollapse> {
+                width: Fill,
+                height: Fit,
                 opened: false
 
                 header: {
@@ -161,8 +166,8 @@ live_design! {
             }
 
             rooms_collapse = <GCollapse> {
-                height: Fit,
                 width: Fill,
+                height: Fit,
                 opened: true
 
                 header: {
@@ -183,16 +188,30 @@ live_design! {
 
                     }
                 }
-                body : {
+                body: {
                     // Fixed ME: `<CachedWidget>` dont work
                     <View> {
                         // FIXED ME: `height: Fit` dont work
-                        height: 350.,
+                        //
+                        // 1. PortalList does not work with a parent that has
+                        // height: Fit. (or it works buggy if there is another child like a label)
+                        // 2. PortalList ideally should be in a Fill parent. (for this use case)
+                        // 3. Collapse body must be Fit.
+                        // 4. In Makepad we cannot put Fill children inside Fit parent
+                        //
+                        // Solutions?
+                        // - Make PortalList not break with height: Fit
+                        // - Instead of PortalList, change rooms_list for a FlatList
+                        // - I will ask Rik tonight in our meeting in case I'm missing something
                         width: Fill,
-                        // show_bg: true,
-                        // draw_bg: {
-                        //     color: #ff0000
-                        // }
+                        height: Fit,
+                        show_bg: true,
+                        draw_bg: {
+                            color: #ff0000
+                        }
+                        <Label> {
+                            text: "SOME TEXT"
+                        }
                         rooms_list = <RoomsList> {}
                     }
                 }
