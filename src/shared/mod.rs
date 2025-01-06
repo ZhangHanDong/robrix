@@ -13,6 +13,7 @@ pub mod styles;
 pub mod text_or_image;
 pub mod typing_animation;
 pub mod verification_badge;
+pub mod input_bar;
 
 pub fn live_design(cx: &mut Cx) {
     // Order matters here, as some widget definitions depend on others.
@@ -29,4 +30,5 @@ pub fn live_design(cx: &mut Cx) {
     jump_to_bottom_button::live_design(cx);
     verification_badge::live_design(cx);
     color_tooltip::live_design(cx);
+    input_bar::live_design(cx);
 }

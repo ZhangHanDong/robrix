@@ -55,7 +55,9 @@ live_design! {
     use crate::shared::typing_animation::TypingAnimation;
     use crate::shared::icon_button::*;
     use crate::shared::jump_to_bottom_button::*;
+    use crate::shared::input_bar::*;
     use crate::home::loading_modal::*;
+
 
     IMG_DEFAULT_AVATAR = dep("crate://self/resources/img/default_avatar.png")
     ICO_FAV = dep("crate://self/resources/icon_favorite.svg")
@@ -808,113 +810,115 @@ live_design! {
                 location_preview = <LocationPreview> { }
 
                 // Below that, display a view that holds the message input bar and send button.
-                input_bar = <View> {
-                    width: Fill, height: Fit
-                    flow: Right,
-                    align: {y: 0.5},
-                    padding: 10.
-                    show_bg: true,
-                    draw_bg: {
-                        color: (COLOR_PRIMARY)
-                    }
+                input_bar = <InputBar> {}
 
-                    location_button = <IconButton> {
-                        draw_icon: {svg_file: (ICO_LOCATION_PERSON)},
-                        icon_walk: {width: 22.0, height: Fit, margin: {left: 0, right: 5}},
-                        text: "",
-                    }
+                // input_bar = <View> {
+                //     width: Fill, height: Fit
+                //     flow: Right,
+                //     align: {y: 0.5},
+                //     padding: 10.
+                //     show_bg: true,
+                //     draw_bg: {
+                //         color: (COLOR_PRIMARY)
+                //     }
 
-                    message_input = <TextInput> {
-                        width: Fill, height: Fit, margin: 0
-                        align: {y: 0.5}
-                        empty_message: "Write a message (in Markdown) ..."
-                        draw_bg: {
-                            color: (COLOR_PRIMARY)
-                            instance radius: 2.0
-                            instance border_width: 0.8
-                            instance border_color: #D0D5DD
-                            instance inset: vec4(0.0, 0.0, 0.0, 0.0)
+                //     location_button = <IconButton> {
+                //         draw_icon: {svg_file: (ICO_LOCATION_PERSON)},
+                //         icon_walk: {width: 22.0, height: Fit, margin: {left: 0, right: 5}},
+                //         text: "",
+                //     }
 
-                            fn get_color(self) -> vec4 {
-                                return self.color
-                            }
+                //     message_input = <TextInput> {
+                //         width: Fill, height: Fit, margin: 0
+                //         align: {y: 0.5}
+                //         empty_message: "Write a message (in Markdown) ..."
+                //         draw_bg: {
+                //             color: (COLOR_PRIMARY)
+                //             instance radius: 2.0
+                //             instance border_width: 0.8
+                //             instance border_color: #D0D5DD
+                //             instance inset: vec4(0.0, 0.0, 0.0, 0.0)
 
-                            fn get_border_color(self) -> vec4 {
-                                return self.border_color
-                            }
+                //             fn get_color(self) -> vec4 {
+                //                 return self.color
+                //             }
 
-                            fn pixel(self) -> vec4 {
-                                let sdf = Sdf2d::viewport(self.pos * self.rect_size)
-                                sdf.box(
-                                    self.inset.x + self.border_width,
-                                    self.inset.y + self.border_width,
-                                    self.rect_size.x - (self.inset.x + self.inset.z + self.border_width * 2.0),
-                                    self.rect_size.y - (self.inset.y + self.inset.w + self.border_width * 2.0),
-                                    max(1.0, self.radius)
-                                )
-                                sdf.fill_keep(self.get_color())
-                                if self.border_width > 0.0 {
-                                    sdf.stroke(self.get_border_color(), self.border_width)
-                                }
-                                return sdf.result;
-                            }
-                        }
-                        draw_text: {
-                            color: (MESSAGE_TEXT_COLOR),
-                            text_style: <MESSAGE_TEXT_STYLE>{},
+                //             fn get_border_color(self) -> vec4 {
+                //                 return self.border_color
+                //             }
 
-                            fn get_color(self) -> vec4 {
-                                return mix(
-                                    self.color,
-                                    #B,
-                                    self.is_empty
-                                )
-                            }
-                        }
+                //             fn pixel(self) -> vec4 {
+                //                 let sdf = Sdf2d::viewport(self.pos * self.rect_size)
+                //                 sdf.box(
+                //                     self.inset.x + self.border_width,
+                //                     self.inset.y + self.border_width,
+                //                     self.rect_size.x - (self.inset.x + self.inset.z + self.border_width * 2.0),
+                //                     self.rect_size.y - (self.inset.y + self.inset.w + self.border_width * 2.0),
+                //                     max(1.0, self.radius)
+                //                 )
+                //                 sdf.fill_keep(self.get_color())
+                //                 if self.border_width > 0.0 {
+                //                     sdf.stroke(self.get_border_color(), self.border_width)
+                //                 }
+                //                 return sdf.result;
+                //             }
+                //         }
+                //         draw_text: {
+                //             color: (MESSAGE_TEXT_COLOR),
+                //             text_style: <MESSAGE_TEXT_STYLE>{},
 
-                        // TODO find a way to override colors
-                        draw_cursor: {
-                            instance focus: 0.0
-                            uniform border_radius: 0.5
-                            fn pixel(self) -> vec4 {
-                                let sdf = Sdf2d::viewport(self.pos * self.rect_size);
-                                sdf.box(
-                                    0.,
-                                    0.,
-                                    self.rect_size.x,
-                                    self.rect_size.y,
-                                    self.border_radius
-                                )
-                                sdf.fill(mix(#0f0, #0b0, self.focus));
-                                return sdf.result
-                            }
-                        }
+                //             fn get_color(self) -> vec4 {
+                //                 return mix(
+                //                     self.color,
+                //                     #B,
+                //                     self.is_empty
+                //                 )
+                //             }
+                //         }
 
-                        // TODO find a way to override colors
-                        draw_selection: {
-                            instance hover: 0.0
-                            instance focus: 0.0
-                            uniform border_radius: 2.0
-                            fn pixel(self) -> vec4 {
-                                let sdf = Sdf2d::viewport(self.pos * self.rect_size);
-                                sdf.box(
-                                    0.,
-                                    0.,
-                                    self.rect_size.x,
-                                    self.rect_size.y,
-                                    self.border_radius
-                                )
-                                sdf.fill(mix(#dfffd6, #bfffb0, self.focus));
-                                return sdf.result
-                            }
-                        }
-                    }
+                //         // TODO find a way to override colors
+                //         draw_cursor: {
+                //             instance focus: 0.0
+                //             uniform border_radius: 0.5
+                //             fn pixel(self) -> vec4 {
+                //                 let sdf = Sdf2d::viewport(self.pos * self.rect_size);
+                //                 sdf.box(
+                //                     0.,
+                //                     0.,
+                //                     self.rect_size.x,
+                //                     self.rect_size.y,
+                //                     self.border_radius
+                //                 )
+                //                 sdf.fill(mix(#0f0, #0b0, self.focus));
+                //                 return sdf.result
+                //             }
+                //         }
 
-                    send_message_button = <IconButton> {
-                        draw_icon: {svg_file: (ICO_SEND)},
-                        icon_walk: {width: 18.0, height: Fit},
-                    }
-                }
+                //         // TODO find a way to override colors
+                //         draw_selection: {
+                //             instance hover: 0.0
+                //             instance focus: 0.0
+                //             uniform border_radius: 2.0
+                //             fn pixel(self) -> vec4 {
+                //                 let sdf = Sdf2d::viewport(self.pos * self.rect_size);
+                //                 sdf.box(
+                //                     0.,
+                //                     0.,
+                //                     self.rect_size.x,
+                //                     self.rect_size.y,
+                //                     self.border_radius
+                //                 )
+                //                 sdf.fill(mix(#dfffd6, #bfffb0, self.focus));
+                //                 return sdf.result
+                //             }
+                //         }
+                //     }
+
+                //     send_message_button = <IconButton> {
+                //         draw_icon: {svg_file: (ICO_SEND)},
+                //         icon_walk: {width: 18.0, height: Fit},
+                //     }
+                // }
                 can_not_send_message_notice = <View> {
                     visible: false
                     show_bg: true
@@ -1528,7 +1532,7 @@ impl RoomScreen {
                             submit_async_request(MatrixRequest::GetNumberUnreadMessages{ room_id: room_id.clone() });
                         }
                     }
-                    
+
                     if clear_cache {
                         tl.content_drawn_since_last_update.clear();
                         tl.profile_drawn_since_last_update.clear();
@@ -2129,7 +2133,7 @@ impl RoomScreen {
                                     event_id: last_event_id.to_owned(),
                                 });
                             }
-                            
+
                         }
                     }
                 }
