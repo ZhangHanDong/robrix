@@ -34,7 +34,7 @@ use crate::{
     }, login::login_screen::LoginAction, media_cache::MediaCacheEntry, persistent_state::{self, ClientSessionPersisted}, profile::{
         user_profile::{AvatarState, UserProfile},
         user_profile_cache::{enqueue_user_profile_update, UserProfileUpdate},
-    }, shared::jump_to_bottom_button::UnreadMessageCount, utils::MEDIA_THUMBNAIL_FORMAT, verification::add_verification_event_handlers_and_sync_client
+    }, shared::jump_to_bottom_button::UnreadMessageCount, utils::MEDIA_THUMBNAIL_FORMAT, verification::add_verification_event_handlers_and_sync_client, room::room_members_cache::{enqueue_room_members_update, RoomMembersUpdate},
 };
 
 #[derive(Parser, Debug, Default)]
@@ -500,23 +500,51 @@ async fn async_worker(
             }
 
             MatrixRequest::FetchRoomMembers { room_id } => {
+                // let (timeline, sender) = {
+                //     let all_room_info = ALL_ROOM_INFO.lock().unwrap();
+                //     let Some(room_info) = all_room_info.get(&room_id) else {
+                //         log!("BUG: room info not found for fetch members request {room_id}");
+                //         continue;
+                //     };
+
+                //     (room_info.timeline.clone(), room_info.timeline_update_sender.clone())
+                // };
+
+                // // Spawn a new async task that will make the actual fetch request.
+                // let _fetch_task = Handle::current().spawn(async move {
+                //     log!("Sending fetch room members request for room {room_id}...");
+                //     timeline.fetch_members().await;
+                //     log!("Completed fetch room members request for room {room_id}.");
+                //     sender.send(TimelineUpdate::RoomMembersFetched).unwrap();
+                //     SignalToUI::set_ui_signal();
+                // });
                 let (timeline, sender) = {
                     let all_room_info = ALL_ROOM_INFO.lock().unwrap();
                     let Some(room_info) = all_room_info.get(&room_id) else {
                         log!("BUG: room info not found for fetch members request {room_id}");
                         continue;
                     };
-
                     (room_info.timeline.clone(), room_info.timeline_update_sender.clone())
                 };
 
-                // Spawn a new async task that will make the actual fetch request.
                 let _fetch_task = Handle::current().spawn(async move {
-                    log!("Sending fetch room members request for room {room_id}...");
-                    timeline.fetch_members().await;
-                    log!("Completed fetch room members request for room {room_id}.");
-                    sender.send(TimelineUpdate::RoomMembersFetched).unwrap();
-                    SignalToUI::set_ui_signal();
+                    let room = timeline.room();
+                    match room.members(RoomMemberships::JOIN).await {
+                        Ok(members) => {
+                            log!("Successfully fetched {} members for room {}", members.len(), room_id);
+                            // 将成员列表添加到缓存
+                            enqueue_room_members_update(RoomMembersUpdate {
+                                room_id: room_id.clone(),
+                                members,
+                            });
+                            // 通知 UI 线程更新已完成
+                            sender.send(TimelineUpdate::RoomMembersFetched).unwrap();
+                            SignalToUI::set_ui_signal();
+                        }
+                        Err(e) => {
+                            error!("Failed to fetch members for room {}: {:?}", room_id, e);
+                        }
+                    }
                 });
             }
 
@@ -725,7 +753,7 @@ async fn async_worker(
 
                 let (timeline, sender) = {
                     let mut all_room_info = ALL_ROOM_INFO.lock().unwrap();
-                    let Some(room_info) = all_room_info.get_mut(&room_id) else {    
+                    let Some(room_info) = all_room_info.get_mut(&room_id) else {
                         log!("BUG: room info not found for subscribe to own user read receipts changed request, room {room_id}");
                         continue;
                     };
@@ -749,8 +777,8 @@ async fn async_worker(
                     if let Some(client_user_id) = current_user_id() {
                         if let Some((event_id, receipt)) = timeline.latest_user_read_receipt(&client_user_id).await {
                             log!("Received own user read receipt: {receipt:?} {event_id:?}");
-                            if let Err(e) = sender.send(TimelineUpdate::OwnUserReadReceipt(receipt)) { 
-                                error!("Failed to get own user read receipt: {e:?}"); 
+                            if let Err(e) = sender.send(TimelineUpdate::OwnUserReadReceipt(receipt)) {
+                                error!("Failed to get own user read receipt: {e:?}");
                             }
                         }
                         while (update_receiver.next().await).is_some() {
@@ -761,8 +789,8 @@ async fn async_worker(
                                 break;
                             }
                             if let Some((_, receipt)) = timeline.latest_user_read_receipt(&client_user_id).await {
-                                if let Err(e) = sender.send(TimelineUpdate::OwnUserReadReceipt(receipt)) { 
-                                    error!("Failed to get own user read receipt: {e:?}"); 
+                                if let Err(e) = sender.send(TimelineUpdate::OwnUserReadReceipt(receipt)) {
+                                    error!("Failed to get own user read receipt: {e:?}");
                                 }
                             }
                         }
@@ -863,7 +891,7 @@ async fn async_worker(
                 };
                 let _send_frr_task = Handle::current().spawn(async move {
                     match timeline.send_single_receipt(ReceiptType::FullyRead, ReceiptThread::Unthreaded, event_id.clone()).await {
-                        Ok(sent) => log!("{} fully read receipt to room {room_id} for event {event_id}", 
+                        Ok(sent) => log!("{} fully read receipt to room {room_id} for event {event_id}",
                             if sent { "Sent" } else { "Already sent" }
                         ),
                         Err(_e) => error!("Failed to send fully read receipt to room {room_id} for event {event_id}; error: {_e:?}"),
@@ -2106,7 +2134,7 @@ fn avatar_from_room_name(room_name: &str) -> RoomPreviewAvatar {
     RoomPreviewAvatar::Text(
         room_name
             .graphemes(true)
-            .find(|&g| g != "@") 
+            .find(|&g| g != "@")
             .map(ToString::to_string)
             .unwrap_or_default()
     )

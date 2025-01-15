@@ -12,6 +12,8 @@ pub mod login;
 pub mod home;
 /// User profile info and a user profile sliding pane.
 mod profile;
+/// Room info
+mod room;
 /// A modal/dialog popup for interactive verification of users/devices.
 mod verification_modal;
 /// Shared UI components.

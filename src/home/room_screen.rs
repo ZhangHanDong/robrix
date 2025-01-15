@@ -16,10 +16,17 @@ use matrix_sdk::{
     },
     OwnedServerName,
 };
+
+use matrix_sdk::ruma::{events::room::member::MembershipState};
+
 use matrix_sdk_ui::timeline::{
     self, EventTimelineItem, InReplyToDetails, MemberProfileChange, Profile, ReactionsByKeyBySender, RepliedToInfo, RoomMembershipChange, TimelineDetails, TimelineItem, TimelineItemContent, TimelineItemKind, VirtualTimelineItem
 };
 use robius_location::Coordinates;
+
+use crate::shared::mention_input_bar::MentionInputBarWidgetExt;
+
+use crate::room::room_members_cache::{get_room_members, process_room_members_updates};
 
 use crate::{
     avatar_cache::{self, AvatarCacheEntry}, event_preview::{text_preview_of_member_profile_change, text_preview_of_other_state, text_preview_of_redacted_message, text_preview_of_room_membership_change, text_preview_of_timeline_item}, home::loading_modal::LoadingModalWidgetExt, location::{get_latest_location, init_location_subscriber, request_location_update, LocationAction, LocationRequest, LocationUpdate}, media_cache::{MediaCache, MediaCacheEntry}, profile::{
@@ -56,6 +63,7 @@ live_design! {
     use crate::shared::icon_button::*;
     use crate::shared::jump_to_bottom_button::*;
     use crate::shared::input_bar::*;
+    use crate::shared::mention_input_bar::*;
     use crate::home::loading_modal::*;
 
 
@@ -810,7 +818,7 @@ live_design! {
                 location_preview = <LocationPreview> { }
 
                 // Below that, display a view that holds the message input bar and send button.
-                input_bar = <InputBar> {}
+                input_bar = <MentionInputBar> {}
 
                 // input_bar = <View> {
                 //     width: Fill, height: Fit
@@ -1204,7 +1212,7 @@ impl Widget for RoomScreen {
             }
 
             // Handle the send message button being clicked and enter key being pressed.
-            let message_input = self.text_input(id!(message_input));
+            let message_input = self.text_input(id!(text_input));
             let send_message_shortcut_pressed = message_input
                 .key_down_unhandled(actions)
                 .is_some_and(|ke| ke.key_code == KeyCode::ReturnKey && ke.modifiers.is_primary());
@@ -1299,6 +1307,7 @@ impl Widget for RoomScreen {
                 error!("!!! RoomScreen::draw_walk(): BUG: expected a PortalList widget, but got something else");
                 continue;
             };
+
             let Some(tl_state) = self.tl_state.as_mut() else {
                 return DrawStep::done();
             };
@@ -1657,6 +1666,15 @@ impl RoomScreen {
                     // log!("Timeline::handle_event(): room members fetched for room {}", tl.room_id);
                     // Here, to be most efficient, we could redraw only the user avatars and names in the timeline,
                     // but for now we just fall through and let the final `redraw()` call re-draw the whole timeline view.
+                    // 先处理缓存更新
+                    process_room_members_updates(cx);
+
+                    if let Some(members) = get_room_members(cx, tl.room_id.clone(), false) {
+                        log!("Retrieved {} members from cache for room {}",
+                                members.len(), tl.room_id);
+                        let input_bar = self.view.mention_input_bar(id!(input_bar));
+                        input_bar.set_room_members(members);
+                    }
                 }
                 TimelineUpdate::MediaFetched => {
                     log!("Timeline::handle_event(): media fetched for room {}", tl.room_id);
@@ -1676,7 +1694,6 @@ impl RoomScreen {
                 TimelineUpdate::CanUserSendMessage(can_user_send_message) => {
                     let input_bar = self.view.view(id!(input_bar));
                     let can_not_send_message_notice = self.view.view(id!(can_not_send_message_notice));
-
                     input_bar.set_visible(can_user_send_message);
                     can_not_send_message_notice.set_visible(!can_user_send_message);
                 }
@@ -2070,8 +2087,13 @@ impl RoomScreen {
             // this will also reset the state of the inner loading modal
             loading_modal.close(cx);
         }
+
         self.room_name = room_name;
-        self.room_id = Some(room_id);
+        self.room_id = Some(room_id.clone());
+
+        // Clear any mention input state
+        let input_bar = self.view.mention_input_bar(id!(input_bar));
+        input_bar.set_room_id(room_id);
         self.show_timeline(cx);
     }
 
