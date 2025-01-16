@@ -1,6 +1,4 @@
 use makepad_widgets::*;
-use crate::profile::user_profile::{UserProfile};
-use crate::profile::user_profile_cache::{get_user_profile_and_room_member};
 use matrix_sdk::room::RoomMember;
 use crate::shared::avatar::AvatarWidgetRefExt;
 use matrix_sdk::ruma::{OwnedRoomId, RoomId};
@@ -8,6 +6,7 @@ use crate::sliding_sync::{submit_async_request, MatrixRequest};
 use crate::avatar_cache::*;
 use crate::utils;
 use crate::shared::adaptive_view::DisplayContext;
+
 
 live_design! {
     use link::theme::*;
@@ -17,56 +16,69 @@ live_design! {
     use crate::shared::styles::*;
     use crate::shared::icon_button::*;
     use crate::shared::avatar::Avatar;
+    use crate::shared::adaptive_view::*;
 
     ICO_LOCATION_PERSON = dep("crate://self/resources/icons/location-person.svg")
     ICO_SEND = dep("crate://self/resources/icon_send.svg")
 
-    // 用户列表项模板定义
-    UserListItem = <View> {
+    // // 用户列表项模板定义
+    // UserListItem = <View> {
+    //     width: Fill,
+    //     height: Fit,
+    //     padding: {left: 8., right: 8., top: 4., bottom: 4.}
+    //     show_bg: true
+    //     draw_bg: {color: #fff}
+    //     flow: Right
+    //     spacing: 8.0
+
+    //     // 左侧头像
+    //     avatar = <Avatar> {
+    //         width: 24,
+    //         height: 24,
+    //         text_view = { text = { draw_text: {
+    //             text_style: { font_size: 12.0 }
+    //         }}}
+    //     }
+
+    //     // 中间使用一个容器包含用户名
+    //     name_container = <View> {
+    //         width: Fill  // 让这个容器填充剩余空间
+    //         height: Fit
+    //         flow: Down   // 使用垂直布局
+    //         spacing: 2.0 // 用户名和Matrix URL之间的间距
+
+    //         // 用户名标签
+    //         label = <Label> {
+    //             width: Fill,
+    //             height: Fit,
+    //             draw_text: {
+    //                 color: #000,
+    //                 text_style: {font_size: 14.0}
+    //             }
+    //         }
+
+    //         // Matrix URL标签
+    //         matrix_url = <Label> {
+    //             width: Fill,
+    //             height: Fit,
+    //             draw_text: {
+    //                 color: #666,  // 使用灰色显示Matrix URL
+    //                 text_style: {font_size: 12.0}  // 使用较小的斜体字
+    //             }
+    //         }
+    //     }
+    // }
+
+
+    // 视觉容器：专门处理背景和视觉相关的属性
+    BaseListItem = <View> {
         width: Fill,
         height: Fit,
         padding: {left: 8., right: 8., top: 4., bottom: 4.}
         show_bg: true
         draw_bg: {color: #fff}
-        flow: Down  // Default to vertical flow for mobile
-        spacing: 8.0
-
-        // Container for avatar and username (will be horizontal in both layouts)
-        user_info = <View> {
-            width: Fill,
-            height: Fit,
-            flow: Right,
-            spacing: 8.0
-            align: {y: 0.5}
-
-            avatar = <Avatar> {
-                width: 24,
-                height: 24,
-                text_view = { text = { draw_text: {
-                    text_style: { font_size: 12.0 }
-                }}}
-            }
-
-            label = <Label> {
-                height: Fit,
-                draw_text: {
-                    color: #000,
-                    text_style: {font_size: 14.0}
-                }
-            }
-
-            filler = <FillerX> {}
-        }
-
-        // Matrix URL (will be positioned differently based on layout)
-        matrix_url = <Label> {
-            height: Fit,
-            draw_text: {
-                color: #666,
-                text_style: {font_size: 12.0, italic: true}
-            }
-        }
     }
+
 
     pub MentionInputBar = {{MentionInputBar}} {
         width: Fill,
@@ -84,7 +96,81 @@ live_design! {
             text: "",
         }
 
-        user_list_item: <UserListItem> {}
+        // user_list_item: <UserListItem> {}
+
+        user_list_item: <AdaptiveView> {
+            Desktop = <BaseListItem> {
+                flow: Right
+                spacing: 8.0
+
+                left_container = <View> {
+                    flow: Right
+                    spacing: 8.0
+
+                    avatar = <Avatar> {
+                        width: 24,
+                        height: 24,
+                        text_view = { text = { draw_text: {
+                            text_style: { font_size: 12.0 }
+                        }}}
+                    }
+
+                    label = <Label> {
+                        height: Fit,
+                        draw_text: {
+                            color: #000,
+                            text_style: {font_size: 14.0}
+                        }
+                    }
+                }
+
+                matrix_url = <Label> {
+                    width: Fit,
+                    height: Fit,
+                    draw_text: {
+                        color: #666,
+                        text_style: {font_size: 12.0}
+                    }
+                }
+
+            }
+
+            Mobile = <BaseListItem> {
+                flow: Down
+                spacing: 2.0
+
+                top_container = <View> {
+                    flow: Right
+                    spacing: 8.0
+
+                    avatar = <Avatar> {
+                        width: 24,
+                        height: 24,
+                        text_view = { text = { draw_text: {
+                            text_style: { font_size: 12.0 }
+                        }}}
+                    }
+
+                    label = <Label> {
+                        height: Fit,
+                        draw_text: {
+                            color: #000,
+                            text_style: {font_size: 14.0}
+                        }
+                    }
+                }
+
+                matrix_url = <Label> {
+                    width: Fill,
+                    height: Fit,
+                    margin: {left: 32}
+                    draw_text: {
+                        color: #666,
+                        text_style: {font_size: 12.0}
+                    }
+                }
+            }
+        }
 
         message_input = <CommandTextInput> {
             width: Fill,
@@ -198,13 +284,13 @@ impl Widget for MentionInputBar {
 
                 // Insert the mention at the current cursor position
                 if let Some(start_idx) = self.mention_start_index {
-                    let mut current_text = self.current_input.clone();
+                    let current_text = self.current_input.clone();
                     let before_mention = &current_text[..start_idx];
                     let after_mention = &current_text[message_input.text_input_ref().borrow()
                         .map_or(0, |p| p.get_cursor().head.index)..];
 
                     // Format the new text with the mention
-                    let new_text = format!("{} {} {}", before_mention, username, after_mention);
+                    let new_text = format!("{}@{}{}", before_mention, username, after_mention);
                     self.set_text(cx, &new_text);
 
                     // Reset mention state
@@ -241,14 +327,6 @@ impl Widget for MentionInputBar {
                 //     }
                 // }
 
-
-                // Get current display context to determine layout
-                let is_desktop = if cx.has_global::<DisplayContext>() {
-                    cx.get_global::<DisplayContext>().is_desktop()
-                } else {
-                    true // Default to desktop layout
-                };
-
                 // Filter room members based on search text
                 for member in &self.room_members {
                     let display_name = member.display_name()
@@ -258,41 +336,26 @@ impl Widget for MentionInputBar {
                     if display_name.to_lowercase().contains(&search_text) {
                         // Create list item with avatar and name
                         let item = WidgetRef::new_from_ptr(cx, self.user_list_item);
-                        // Set the display name
-                        item.label(id!(user_info.label)).set_text(&display_name);
-
                         // 设置Matrix URL
                         let matrix_url = format!("{}:matrix.org", member.user_id());
-                        item.label(id!(matrix_url)).set_text(&matrix_url);
 
-                        // 在桌面端布局中
-                        if is_desktop {
-                            // 设置为水平布局并显示 filler
-                            item.apply_over(cx, live!(
-                                flow: Right,
-                                align: {y: 0.5}
-                            ));
 
-                            // 显示 filler 来推动 matrix_url 到右侧
-                            item.view(id!(user_info.filler)).set_visible(true);
+                        // 根据布局设置不同的路径
+                        if cx.get_global::<DisplayContext>().is_desktop() {
+                            item.label(id!(left_container.label)).set_text(&display_name);
+                            item.label(id!(matrix_url)).set_text(&matrix_url);
                         } else {
-                            // 移动端布局：垂直布局并隐藏 filler
-                            item.apply_over(cx, live!(
-                                flow: Down,
-                                spacing: 4.0
-                            ));
-
-                            // 隐藏 filler
-                            item.view(id!(user_info.filler)).set_visible(false);
-
-                            // 设置 matrix_url 的左边距使其对齐
-                            item.label(id!(matrix_url)).apply_over(cx, live!(
-                                margin: {left: 0.}
-                            ));
+                            item.label(id!(top_container.label)).set_text(&display_name);
+                            item.label(id!(matrix_url)).set_text(&matrix_url);
                         }
 
-                        // Handle avatar settings
-                        let avatar = item.avatar(id!(user_info.avatar));
+                        // 设置头像的代码在两种模式下是一样的
+                        let avatar = if cx.get_global::<DisplayContext>().is_desktop() {
+                            item.avatar(id!(left_container.avatar))
+                        } else {
+                            item.avatar(id!(top_container.avatar))
+                        };
+
                         let room_id : &RoomId = self.room_id.as_ref().unwrap();
 
                         log!("======= ROOM ID ======= : {:?}", room_id);
@@ -302,7 +365,7 @@ impl Widget for MentionInputBar {
                             // 从缓存中获取头像数据
                             if let Some(avatar_data) = get_avatar(cx, mxc_uri) {
                                 // 如果缓存中有头像数据,显示图片
-                                avatar.show_image(None, |img| {
+                                let _ = avatar.show_image(None, |img| {
                                     utils::load_png_or_jpg(&img, cx, &avatar_data)
                                 });
                             } else {
