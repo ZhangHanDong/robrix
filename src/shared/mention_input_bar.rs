@@ -17,6 +17,7 @@ live_design! {
     use crate::shared::styles::*;
     use crate::shared::icon_button::*;
     use crate::shared::avatar::Avatar;
+    use crate::shared::helpers::FillerX;
 
     ICO_LOCATION_PERSON = dep("crate://self/resources/icons/location-person.svg")
     ICO_SEND = dep("crate://self/resources/icon_send.svg")
@@ -63,7 +64,7 @@ live_design! {
             height: Fit,
             draw_text: {
                 color: #666,
-                text_style: {font_size: 12.0, italic: true}
+                text_style: {font_size: 12.0}
             }
         }
     }
@@ -95,13 +96,11 @@ live_design! {
             keyboard_focus_color: (THEME_COLOR_CTRL_HOVER)
             pointer_hover_color: (THEME_COLOR_CTRL_HOVER * 0.85)
 
+            use_separate_search: false
+
             // Configure the popup search area
             popup = {
-                search_input = {
-                    empty_message: "Search users..."
-                    draw_bg: {color: #fff}
-                }
-
+                search_input = {}
                 list = {
                     height: 200.0  // Fixed height in pixels
                     clip_y: true
@@ -154,6 +153,10 @@ pub struct MentionInputBar {
     current_input: String,
     #[rust]
     mention_start_index: Option<usize>,
+    #[rust]
+    needs_update: bool,
+    #[rust]
+    is_searching: bool,
 }
 
 impl LiveHook for MentionInputBar {
@@ -187,28 +190,26 @@ impl Widget for MentionInputBar {
     }
 
     fn handle_event(&mut self, cx: &mut Cx, event: &Event, scope: &mut Scope) {
-        // Get reference to our input component
         let widget_uid = self.widget_uid();
         let mut message_input = self.command_text_input(id!(message_input));
 
         if let Event::Actions(actions) = event {
-            // Handle user selection from popup list
+            // 1. 处理用户选择
             if let Some(selected) = message_input.item_selected(actions) {
-                let username = selected.label(id!(label)).text();
-
-                // Insert the mention at the current cursor position
+                let username = selected.label(id!(user_info.label)).text();
                 if let Some(start_idx) = self.mention_start_index {
                     let mut current_text = self.current_input.clone();
                     let before_mention = &current_text[..start_idx];
                     let after_mention = &current_text[message_input.text_input_ref().borrow()
                         .map_or(0, |p| p.get_cursor().head.index)..];
 
-                    // Format the new text with the mention
                     let new_text = format!("{} {} {}", before_mention, username, after_mention);
                     self.set_text(cx, &new_text);
 
-                    // Reset mention state
+                    // 重置状态并关闭弹框
                     self.mention_start_index = None;
+                    self.is_searching = false;
+                    message_input.view(id!(popup)).set_visible(false);
                 }
 
                 cx.widget_action(
@@ -218,116 +219,33 @@ impl Widget for MentionInputBar {
                 );
             }
 
-
-            // Handle updating the user list when searching
-            if message_input.should_build_items(actions) {
-                message_input.clear_items();
-
-                // Get the search text for filtering
-                let search_text = message_input.search_text().to_lowercase();
-
-                log!("Building user list for search text: '{}', have {} members",
-                        search_text, self.room_members.len());
-                // Example user list - in a real app, this would come from your data source
-                // let users = vec!["Alice", "Bob", "Charlie", "David", "Eve"];
-
-                // // Filter and add matching users to the popup list
-                // for username in users {
-                //     if username.to_lowercase().contains(&search_text) {
-                //         // Create a new list item from our template
-                //         let item = WidgetRef::new_from_ptr(cx, self.user_list_item);
-                //         item.label(id!(label)).set_text(username);
-                //         message_input.add_item(item);
-                //     }
-                // }
-
-
-                // Get current display context to determine layout
-                let is_desktop = if cx.has_global::<DisplayContext>() {
-                    cx.get_global::<DisplayContext>().is_desktop()
-                } else {
-                    true // Default to desktop layout
-                };
-
-                // Filter room members based on search text
-                for member in &self.room_members {
-                    let display_name = member.display_name()
-                        .map(|n| n.to_string())
-                        .unwrap_or_else(|| member.user_id().to_string());
-
-                    if display_name.to_lowercase().contains(&search_text) {
-                        // Create list item with avatar and name
-                        let item = WidgetRef::new_from_ptr(cx, self.user_list_item);
-                        // Set the display name
-                        item.label(id!(user_info.label)).set_text(&display_name);
-
-                        // 设置Matrix URL
-                        let matrix_url = format!("{}:matrix.org", member.user_id());
-                        item.label(id!(matrix_url)).set_text(&matrix_url);
-
-                        // 在桌面端布局中
-                        if is_desktop {
-                            // 设置为水平布局并显示 filler
-                            item.apply_over(cx, live!(
-                                flow: Right,
-                                align: {y: 0.5}
-                            ));
-
-                            // 显示 filler 来推动 matrix_url 到右侧
-                            item.view(id!(user_info.filler)).set_visible(true);
-                        } else {
-                            // 移动端布局：垂直布局并隐藏 filler
-                            item.apply_over(cx, live!(
-                                flow: Down,
-                                spacing: 4.0
-                            ));
-
-                            // 隐藏 filler
-                            item.view(id!(user_info.filler)).set_visible(false);
-
-                            // 设置 matrix_url 的左边距使其对齐
-                            item.label(id!(matrix_url)).apply_over(cx, live!(
-                                margin: {left: 0.}
-                            ));
-                        }
-
-                        // Handle avatar settings
-                        let avatar = item.avatar(id!(user_info.avatar));
-                        let room_id : &RoomId = self.room_id.as_ref().unwrap();
-
-                        log!("======= ROOM ID ======= : {:?}", room_id);
-
-                        // 从 member 获取 mxc_uri
-                        if let Some(mxc_uri) = member.avatar_url() {
-                            // 从缓存中获取头像数据
-                            if let Some(avatar_data) = get_avatar(cx, mxc_uri) {
-                                // 如果缓存中有头像数据,显示图片
-                                avatar.show_image(None, |img| {
-                                    utils::load_png_or_jpg(&img, cx, &avatar_data)
-                                });
-                            } else {
-                                // 如果缓存中没有,显示文本头像
-                                avatar.show_text(None, &display_name);
-                            }
-                        } else {
-                            // 如果没有设置头像,显示文本头像
-                            avatar.show_text(None, &display_name);
-                        }
-
-
-                        message_input.add_item(item);
-                    }
-                }
-            }
-
-            // Handle text input changes
+            // 2. 处理文本变化
             if let Some(action) = actions.find_widget_action(message_input.text_input_ref().widget_uid()) {
                 if let TextInputAction::Change(text) = action.cast() {
                     self.current_input = text.clone();
+                    let cursor_pos = message_input.text_input_ref().borrow()
+                        .map_or(0, |p| p.get_cursor().head.index);
 
-                    // Track mention start position when @ is typed
-                    if text.ends_with('@') {
-                        self.mention_start_index = Some(text.len() - 1);
+                    // 检查当前光标位置是否在任何已存在的 @ 后面
+                    let prev_at_pos = text[..cursor_pos].rfind('@')
+                        .filter(|&idx| !text[idx..cursor_pos].contains(char::is_whitespace));
+
+                    if text.chars().nth(cursor_pos.saturating_sub(1)) == Some('@') {
+                        // 新输入了 @
+                        self.mention_start_index = Some(cursor_pos - 1);
+                        self.is_searching = true;
+                        self.show_user_list(cx, &mut message_input, "");
+                    } else if let Some(start_idx) = prev_at_pos {
+                        // 光标在已存在的 @ 后面
+                        self.mention_start_index = Some(start_idx);
+                        self.is_searching = true;
+                        let search_text = text[start_idx + 1..cursor_pos].to_lowercase();
+                        self.show_user_list(cx, &mut message_input, &search_text);
+                    } else {
+                        // 不在任何 @ 上下文中
+                        self.mention_start_index = None;
+                        self.is_searching = false;
+                        message_input.view(id!(popup)).set_visible(false);
                     }
 
                     cx.widget_action(
@@ -335,6 +253,24 @@ impl Widget for MentionInputBar {
                         &scope.path,
                         MentionInputBarAction::MessageChanged(text),
                     );
+                }
+
+                // 3. 处理特殊键盘事件
+                if let TextInputAction::KeyDownUnhandled(ke) = action.cast() {
+                    match ke.key_code {
+                        KeyCode::Escape => {
+                            if self.is_searching {
+                                self.mention_start_index = None;
+                                self.is_searching = false;
+                                message_input.view(id!(popup)).set_visible(false);
+                                self.redraw(cx);
+                            }
+                        }
+                        KeyCode::ArrowUp | KeyCode::ArrowDown if self.is_searching => {
+                            message_input.view(id!(popup)).set_visible(true);
+                        }
+                        _ => {}
+                    }
                 }
             }
         }
@@ -345,6 +281,74 @@ impl Widget for MentionInputBar {
 
 // Implement public methods for the component
 impl MentionInputBar {
+    fn show_user_list(&mut self, cx: &mut Cx, message_input: &mut CommandTextInputRef, search_text: &str) {
+        self.update_user_list(cx, message_input, search_text);
+        message_input.view(id!(popup)).set_visible(true);
+        self.redraw(cx);
+    }
+
+    fn update_user_list(&mut self, cx: &mut Cx, message_input: &mut CommandTextInputRef, search_text: &str) {
+        message_input.clear_items();
+
+        // 只在搜索状态下显示用户列表
+        if self.is_searching {
+            let is_desktop = if cx.has_global::<DisplayContext>() {
+                cx.get_global::<DisplayContext>().is_desktop()
+            } else {
+                true
+            };
+
+            // 过滤并显示匹配的用户
+            for member in &self.room_members {
+                let display_name = member.display_name()
+                    .map(|n| n.to_string())
+                    .unwrap_or_else(|| member.user_id().to_string());
+
+                if display_name.to_lowercase().contains(search_text) {
+                    let item = WidgetRef::new_from_ptr(cx, self.user_list_item);
+
+                    item.label(id!(user_info.label)).set_text(&display_name);
+
+                    let matrix_url = format!("{}:matrix.org", member.user_id());
+                    item.label(id!(matrix_url)).set_text(&matrix_url);
+
+                    if is_desktop {
+                        item.apply_over(cx, live!(
+                            flow: Right,
+                            align: {y: 0.5}
+                        ));
+                        item.view(id!(user_info.filler)).set_visible(true);
+                    } else {
+                        item.apply_over(cx, live!(
+                            flow: Down,
+                            spacing: 4.0
+                        ));
+                        item.view(id!(user_info.filler)).set_visible(false);
+                        item.label(id!(matrix_url)).apply_over(cx, live!(
+                            margin: {left: 0.}
+                        ));
+                    }
+
+                    // 处理头像显示
+                    let avatar = item.avatar(id!(user_info.avatar));
+                    if let Some(mxc_uri) = member.avatar_url() {
+                        if let Some(avatar_data) = get_avatar(cx, mxc_uri) {
+                            avatar.show_image(None, |img| {
+                                utils::load_png_or_jpg(&img, cx, &avatar_data)
+                            });
+                        } else {
+                            avatar.show_text(None, &display_name);
+                        }
+                    } else {
+                        avatar.show_text(None, &display_name);
+                    }
+
+                    message_input.add_item(item);
+                }
+            }
+        }
+    }
+
     pub fn text(&self) -> String {
         self.command_text_input(id!(message_input))
             .text_input_ref()
