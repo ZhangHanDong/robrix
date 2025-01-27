@@ -12,13 +12,10 @@ use matrix_sdk::{
                 message::{ForwardThread, RoomMessageEventContent}, MediaSource
             }, FullStateEventContent, MessageLikeEventType, TimelineEventType
         }, MilliSecondsSinceUnixEpoch, OwnedEventId, OwnedMxcUri, OwnedRoomAliasId, OwnedRoomId, OwnedUserId, UserId
-    }, sliding_sync::VersionBuilder, Client, Error, Room, RoomMemberships
+    }, sliding_sync::VersionBuilder, Client, ClientBuildError, Error, Room, RoomMemberships
 };
 use matrix_sdk_ui::{
-    room_list_service::{self, RoomListLoadingState},
-    sync_service::{self, SyncService},
-    timeline::{AnyOtherFullStateEventContent, EventTimelineItem, RepliedToInfo, TimelineDetails, TimelineItem, TimelineItemContent, MembershipChange},
-    Timeline,
+    room_list_service::{self, RoomListLoadingState}, sync_service::{self, SyncService}, timeline::{AnyOtherFullStateEventContent, EventTimelineItem, MembershipChange, RepliedToInfo, TimelineDetails, TimelineEventItemId, TimelineItem, TimelineItemContent}, RoomListService, Timeline
 };
 use robius_open::Uri;
 use tokio::{
@@ -34,14 +31,18 @@ use crate::{
     }, login::login_screen::LoginAction, media_cache::MediaCacheEntry, persistent_state::{self, ClientSessionPersisted}, profile::{
         user_profile::{AvatarState, UserProfile},
         user_profile_cache::{enqueue_user_profile_update, UserProfileUpdate},
+<<<<<<< HEAD
     }, shared::jump_to_bottom_button::UnreadMessageCount, utils::MEDIA_THUMBNAIL_FORMAT, verification::add_verification_event_handlers_and_sync_client, room::room_members_cache::{enqueue_room_members_update, RoomMembersUpdate},
+=======
+    }, shared::{jump_to_bottom_button::UnreadMessageCount, popup_list::enqueue_popup_notification}, utils::AVATAR_THUMBNAIL_FORMAT, verification::add_verification_event_handlers_and_sync_client
+>>>>>>> main
 };
 
 #[derive(Parser, Debug, Default)]
 struct Cli {
-    /// The user name that should be used for the login.
+    /// The user ID to login with.
     #[clap(value_parser)]
-    username: String,
+    user_id: String,
 
     /// The password that should be used for the login.
     #[clap(value_parser)]
@@ -66,7 +67,7 @@ struct Cli {
 impl From<LoginByPassword> for Cli {
     fn from(login: LoginByPassword) -> Self {
         Self {
-            username: login.user_id,
+            user_id: login.user_id,
             password: login.password,
             homeserver: None,
             proxy: None,
@@ -81,7 +82,7 @@ impl From<LoginByPassword> for Cli {
 async fn build_client(
     cli: &Cli,
     data_dir: &Path,
-) -> anyhow::Result<(Client, ClientSessionPersisted)> {
+) -> Result<(Client, ClientSessionPersisted), ClientBuildError> {
     // Generate a unique subfolder name for the client database,
     // which allows multiple clients to run simultaneously.
     let now = chrono::Local::now();
@@ -159,24 +160,26 @@ async fn login(
             // Attempt to login using the CLI-provided username & password.
             let login_result = client
                 .matrix_auth()
-                .login_username(&cli.username, &cli.password)
+                .login_username(&cli.user_id, &cli.password)
                 .initial_device_display_name("robrix-un-pw")
                 .send()
                 .await?;
             if client.logged_in() {
                 log!("Logged in successfully? {:?}", client.logged_in());
-                enqueue_rooms_list_update(RoomsListUpdate::Status {
-                    status: format!("Logged in as {}. Loading rooms...", cli.username),
-                });
+                let status = format!("Logged in as {}.\n → Loading rooms...", cli.user_id);
+                // enqueue_popup_notification(status.clone());
+                enqueue_rooms_list_update(RoomsListUpdate::Status { status });
                 if let Err(e) = persistent_state::save_session(&client, client_session).await {
-                    error!("Failed to save session state to storage: {e:?}");
+                    let err_msg = format!("Failed to save session state to storage: {e}");
+                    error!("{err_msg}");
+                    enqueue_popup_notification(err_msg);
                 }
                 Ok((client, None))
             } else {
-                enqueue_rooms_list_update(RoomsListUpdate::Status {
-                    status: format!("Failed to login as {}: {:?}", cli.username, login_result),
-                });
-                bail!("Failed to login as {}: {login_result:?}", cli.username);
+                let err_msg = format!("Failed to login as {}: {:?}", cli.user_id, login_result);
+                enqueue_popup_notification(err_msg.clone());
+                enqueue_rooms_list_update(RoomsListUpdate::Status { status: err_msg.clone() });
+                bail!(err_msg);
             }
         }
 
@@ -196,7 +199,10 @@ async fn populate_login_types(
     homeserver_url: &str,
     login_types: &mut Vec<LoginType>,
 ) -> Result<()> {
-    Cx::post_action(LoginAction::Status(String::from("Fetching Login Types ...")));
+    Cx::post_action(LoginAction::Status {
+        title: "Querying login types".into(),
+        status: "Fetching supported login types from the homeserver...".into(),
+    });
     let homeserver_url = if homeserver_url.is_empty() {
         DEFAULT_HOMESERVER
     } else {
@@ -374,6 +380,12 @@ pub enum MatrixRequest {
     /// The response is delivered back to the main UI thread via a `TimelineUpdate::CanUserSendMessage`.
     CheckCanUserSendMessage {
         room_id: OwnedRoomId,
+    },
+    /// Toggles the given reaction to the given event in the given room.
+    ToggleReaction {
+        room_id: OwnedRoomId,
+        timeline_event_id: TimelineEventItemId,
+        reaction: String,
     }
 }
 
@@ -489,7 +501,9 @@ async fn async_worker(
                         Ok(_) => {
                             // log!("Successfully fetched details for event {event_id} in room {room_id}.");
                         }
-                        Err(ref e) => error!("Error fetching details for event {event_id} in room {room_id}: {e:?}"),
+                        Err(ref _e) => {
+                            // error!("Error fetching details for event {event_id} in room {room_id}: {e:?}");
+                        }
                     }
                     sender.send(TimelineUpdate::EventDetailsFetched {
                         event_id,
@@ -551,9 +565,9 @@ async fn async_worker(
             MatrixRequest::GetUserProfile { user_id, room_id, local_only } => {
                 let Some(client) = CLIENT.get() else { continue };
                 let _fetch_task = Handle::current().spawn(async move {
-                    log!("Sending get user profile request: user: {user_id}, \
-                        room: {room_id:?}, local_only: {local_only}...",
-                    );
+                    // log!("Sending get user profile request: user: {user_id}, \
+                    //     room: {room_id:?}, local_only: {local_only}...",
+                    // );
 
                     let mut update = None;
 
@@ -608,7 +622,7 @@ async fn async_worker(
                     }
 
                     if let Some(upd) = update {
-                        log!("Successfully completed get user profile request: user: {user_id}, room: {room_id:?}, local_only: {local_only}.");
+                        // log!("Successfully completed get user profile request: user: {user_id}, room: {room_id:?}, local_only: {local_only}.");
                         enqueue_user_profile_update(upd);
                     } else {
                         log!("Failed to get user profile: user: {user_id}, room: {room_id:?}, local_only: {local_only}.");
@@ -632,6 +646,11 @@ async fn async_worker(
                         Ok(_) => SignalToUI::set_ui_signal(),
                         Err(e) => log!("Failed to send timeline update: {e:?} for GetNumberUnreadMessages request for room {room_id}"),
                     }
+                    enqueue_rooms_list_update(RoomsListUpdate::UpdateNumUnreadMessages {
+                        room_id: room_id.clone(),
+                        count: UnreadMessageCount::Known(timeline.room().num_unread_messages()),
+                        unread_mentions:timeline.room().num_unread_mentions(),
+                    });
                 });
             }
             MatrixRequest::IgnoreUser { ignore, room_member, room_id } => {
@@ -809,14 +828,13 @@ async fn async_worker(
                     todo!("Send the resolved room alias back to the UI thread somehow.");
                 });
             }
-
             MatrixRequest::FetchAvatar { mxc_uri, on_fetched } => {
                 let Some(client) = CLIENT.get() else { continue };
                 let _fetch_task = Handle::current().spawn(async move {
                     // log!("Sending fetch avatar request for {mxc_uri:?}...");
                     let media_request = MediaRequest {
                         source: MediaSource::Plain(mxc_uri.clone()),
-                        format: MEDIA_THUMBNAIL_FORMAT.into(),
+                        format: AVATAR_THUMBNAIL_FORMAT.into(),
                     };
                     let res = client.media().get_media_content(&media_request, true).await;
                     // log!("Fetched avatar for {mxc_uri:?}, succeeded? {}", res.is_ok());
@@ -851,12 +869,18 @@ async fn async_worker(
                     if let Some(replied_to_info) = replied_to {
                         match timeline.send_reply(message.into(), replied_to_info, ForwardThread::Yes).await {
                             Ok(_send_handle) => log!("Sent reply message to room {room_id}."),
-                            Err(_e) => error!("Failed to send reply message to room {room_id}: {_e:?}"),
+                            Err(_e) => {
+                                error!("Failed to send reply message to room {room_id}: {_e:?}");
+                                enqueue_popup_notification(format!("Failed to send reply: {_e}"));
+                            }
                         }
                     } else {
                         match timeline.send(message.into()).await {
                             Ok(_send_handle) => log!("Sent message to room {room_id}."),
-                            Err(_e) => error!("Failed to send message to room {room_id}: {_e:?}"),
+                            Err(_e) => {
+                                error!("Failed to send message to room {room_id}: {_e:?}");
+                                enqueue_popup_notification(format!("Failed to send message: {_e}"));
+                            }
                         }
                     }
                     SignalToUI::set_ui_signal();
@@ -877,6 +901,12 @@ async fn async_worker(
                         Ok(sent) => log!("{} read receipt to room {room_id} for event {event_id}", if sent { "Sent" } else { "Already sent" }),
                         Err(_e) => error!("Failed to send read receipt to room {room_id} for event {event_id}; error: {_e:?}"),
                     }
+                    // Also update the number of unread messages in the room.
+                    enqueue_rooms_list_update(RoomsListUpdate::UpdateNumUnreadMessages {
+                        room_id: room_id.clone(),
+                        count: UnreadMessageCount::Known(timeline.room().num_unread_messages()),
+                        unread_mentions: timeline.room().num_unread_mentions()
+                    });
                 });
             },
 
@@ -896,6 +926,12 @@ async fn async_worker(
                         ),
                         Err(_e) => error!("Failed to send fully read receipt to room {room_id} for event {event_id}; error: {_e:?}"),
                     }
+                    // Also update the number of unread messages in the room.
+                    enqueue_rooms_list_update(RoomsListUpdate::UpdateNumUnreadMessages {
+                        room_id: room_id.clone(),
+                        count: UnreadMessageCount::Known(timeline.room().num_unread_messages()),
+                        unread_mentions: timeline.room().num_unread_mentions()
+                    });
                 });
             },
 
@@ -922,6 +958,27 @@ async fn async_worker(
 
                     if let Err(e) = sender.send(TimelineUpdate::CanUserSendMessage(can_user_send_message)) {
                         error!("Failed to send the result of if user can send message: {e}")
+                    }
+                });
+            },
+            MatrixRequest::ToggleReaction { room_id, timeline_event_id, reaction } => {
+                let timeline = {
+                    let all_room_info = ALL_ROOM_INFO.lock().unwrap();
+                    let Some(room_info) = all_room_info.get(&room_id) else {
+                        log!("BUG: room info not found for send toggle reaction {room_id}");
+                        continue;
+                    };
+                    room_info.timeline.clone()
+                };
+
+                let _toggle_reaction_task = Handle::current().spawn(async move {
+                    log!("Toggle Reaction to room {room_id}: ...");
+                    match timeline.toggle_reaction(&timeline_event_id, &reaction).await {
+                        Ok(_send_handle) => {
+                            SignalToUI::set_ui_signal();
+                            log!("Sent toggle reaction to room {room_id} {reaction}.")
+                        },
+                        Err(_e) => error!("Failed to send toggle reaction to room {room_id} {reaction}; error: {_e:?}"),
                     }
                 });
             }
@@ -971,6 +1028,7 @@ pub fn start_matrix_tokio() -> Result<()> {
                             rooms_list::enqueue_rooms_list_update(RoomsListUpdate::Status {
                                 status: e.to_string(),
                             });
+                            enqueue_popup_notification(format!("Rooms list update error: {e}"));
                         },
                         Err(e) => {
                             error!("BUG: failed to join main async loop task: {e:?}");
@@ -988,6 +1046,7 @@ pub fn start_matrix_tokio() -> Result<()> {
                             rooms_list::enqueue_rooms_list_update(RoomsListUpdate::Status {
                                 status: e.to_string(),
                             });
+                            enqueue_popup_notification(format!("Rooms list update error: {e}"));
                         },
                         Err(e) => {
                             error!("BUG: failed to join async worker task: {e:?}");
@@ -1151,7 +1210,7 @@ async fn async_main_loop(
     log!("Most recent user ID: {most_recent_user_id:?}");
     let cli_parse_result = Cli::try_parse();
     let cli_has_valid_username_password = cli_parse_result.as_ref()
-        .is_ok_and(|cli| !cli.username.is_empty() && !cli.password.is_empty());
+        .is_ok_and(|cli| !cli.user_id.is_empty() && !cli.password.is_empty());
     log!("CLI parsing succeeded? {}. CLI has valid UN+PW? {}",
         cli_parse_result.as_ref().is_ok(),
         cli_has_valid_username_password,
@@ -1165,7 +1224,7 @@ async fn async_main_loop(
     let new_login_opt = if !wait_for_login {
         let specified_username = cli_parse_result.as_ref().ok().and_then(|cli|
             username_to_full_user_id(
-                &cli.username,
+                &cli.user_id,
                 cli.homeserver.as_deref(),
             )
         );
@@ -1175,25 +1234,31 @@ async fn async_main_loop(
         if let Ok(session) = persistent_state::restore_session(specified_username).await {
             Some(session)
         } else {
-            let status_err = "Failed to restore previous user session. Please login again.";
+            let status_err = "Could not restore previous user session.\n\nPlease login again.";
             log!("{status_err}");
-            Cx::post_action(LoginAction::Status(status_err.to_string()));
+            Cx::post_action(LoginAction::LoginFailure(status_err.to_string()));
 
             if let Ok(cli) = &cli_parse_result {
-                let status_str = format!("Attempting auto-login from CLI arguments as user '{}'...", cli.username);
-                log!("{status_str}");
-                Cx::post_action(LoginAction::Status(status_str));
+                log!("Attempting auto-login from CLI arguments as user '{}'...", cli.user_id);
+                Cx::post_action(LoginAction::CliAutoLogin {
+                    user_id: cli.user_id.clone(),
+                    homeserver: cli.homeserver.clone(),
+                });
                 let mut login_types: Vec<LoginType> = Vec::new();
                 let homeserver_url = cli.homeserver.as_deref().unwrap_or(DEFAULT_HOMESERVER);
                 if let Err(e) = populate_login_types(homeserver_url, &mut login_types).await {
                     error!("Populating Login types failed: {e:?}");
-                    Cx::post_action(LoginAction::LoginFailure(format!("Populating Login types failed {homeserver_url} {e:?}")));
+                    Cx::post_action(LoginAction::LoginFailure(
+                        format!("Failed to fetch supported login types from homeserver {homeserver_url}")
+                    ));
                 }
                 match login(cli, LoginRequest::LoginByCli, &login_types).await {
                     Ok(new_login) => Some(new_login),
                     Err(e) => {
                         error!("CLI-based login failed: {e:?}");
-                        Cx::post_action(LoginAction::LoginFailure(format!("Login failed: {e:?}")));
+                        Cx::post_action(LoginAction::LoginFailure(
+                            format!("Could not login with CLI-provided arguments.\n\nPlease login manually.\n\nError: {e}")
+                        ));
                         enqueue_rooms_list_update(RoomsListUpdate::Status {
                             status: format!("Login failed: {e:?}"),
                         });
@@ -1216,7 +1281,9 @@ async fn async_main_loop(
             // Display the available Identity providers by fetching the login types
             if let Err(e) = populate_login_types(homeserver_url, &mut login_types).await {
                 error!("Populating Login types failed for {homeserver_url}: {e:?}");
-                Cx::post_action(LoginAction::LoginFailure(format!("Populating Login types failed for {homeserver_url} {e:?}")));
+                Cx::post_action(LoginAction::LoginFailure(
+                    format!("Failed to fetch supported login types from homeserver {homeserver_url}")
+                ));
             }
             loop {
                 log!("Waiting for login request...");
@@ -1225,7 +1292,9 @@ async fn async_main_loop(
                         if let LoginRequest::HomeserverLoginTypesQuery(homeserver_url) = login_request {
                             if let Err(e) = populate_login_types(&homeserver_url, &mut login_types).await {
                                 error!("Populating Login types failed: {e:?}");
-                                Cx::post_action(LoginAction::LoginFailure(format!("Populating Login types failed {homeserver_url} {e:?}")));
+                                Cx::post_action(LoginAction::LoginFailure(
+                                    format!("Failed to fetch supported login types from homeserver {homeserver_url}")
+                                ));
                             }
                             continue
                         }
@@ -1235,11 +1304,11 @@ async fn async_main_loop(
                             }
                             Err(e) => {
                                 error!("Login failed: {e:?}");
-                                Cx::post_action(LoginAction::LoginFailure(format!("Login failed: {e:?}")));
+                                Cx::post_action(LoginAction::LoginFailure(format!("{e}")));
                                 enqueue_rooms_list_update(RoomsListUpdate::Status {
-                                    status: format!("Login failed: {e:?}"),
+                                    status: format!("Login failed: {e}"),
                                 });
-                            }
+                    }
                         }
                     },
                     None => {
@@ -1253,9 +1322,11 @@ async fn async_main_loop(
 
     Cx::post_action(LoginAction::LoginSuccess);
 
-    enqueue_rooms_list_update(RoomsListUpdate::Status {
-        status: format!("Logged in as {}. Loading rooms...", client.user_id().unwrap()),
-    });
+    let logged_in_user_id = client.user_id()
+        .expect("BUG: client.user_id() returned None after successful login!");
+    let status = format!("Logged in as {}.\n → Loading rooms...", logged_in_user_id);
+    // enqueue_popup_notification(status.clone());
+    enqueue_rooms_list_update(RoomsListUpdate::Status { status });
 
     CLIENT.set(client.clone()).expect("BUG: CLIENT already set!");
 
@@ -1295,7 +1366,7 @@ async fn async_main_loop(
                     let _num_new_rooms = new_rooms.len();
                     if LOG_ROOM_LIST_DIFFS { log!("room_list: diff Append {_num_new_rooms}"); }
                     for new_room in &new_rooms {
-                        add_new_room(new_room).await?;
+                        add_new_room(new_room, &room_list_service).await?;
                     }
                     all_known_rooms.append(new_rooms);
                 }
@@ -1307,12 +1378,12 @@ async fn async_main_loop(
                 }
                 VectorDiff::PushFront { value: new_room } => {
                     if LOG_ROOM_LIST_DIFFS { log!("room_list: diff PushFront"); }
-                    add_new_room(&new_room).await?;
+                    add_new_room(&new_room, &room_list_service).await?;
                     all_known_rooms.push_front(new_room);
                 }
                 VectorDiff::PushBack { value: new_room } => {
                     if LOG_ROOM_LIST_DIFFS { log!("room_list: diff PushBack"); }
-                    add_new_room(&new_room).await?;
+                    add_new_room(&new_room, &room_list_service).await?;
                     all_known_rooms.push_back(new_room);
                 }
                 VectorDiff::PopFront => {
@@ -1331,13 +1402,13 @@ async fn async_main_loop(
                 }
                 VectorDiff::Insert { index, value: new_room } => {
                     if LOG_ROOM_LIST_DIFFS { log!("room_list: diff Insert at {index}"); }
-                    add_new_room(&new_room).await?;
+                    add_new_room(&new_room, &room_list_service).await?;
                     all_known_rooms.insert(index, new_room);
                 }
                 VectorDiff::Set { index, value: changed_room } => {
                     if LOG_ROOM_LIST_DIFFS { log!("room_list: diff Set at {index}"); }
                     let old_room = all_known_rooms.get(index).expect("BUG: Set index out of bounds");
-                    update_room(old_room, &changed_room).await?;
+                    update_room(old_room, &changed_room, &room_list_service).await?;
                     all_known_rooms.set(index, changed_room);
                 }
                 VectorDiff::Remove { index: remove_index } => {
@@ -1356,7 +1427,7 @@ async fn async_main_loop(
                                 if LOG_ROOM_LIST_DIFFS {
                                     log!("Optimizing Remove({remove_index}) + Insert({insert_index}) into Set (update) for room {}", room.room_id());
                                 }
-                                update_room(&room, new_room).await?;
+                                update_room(&room, new_room, &room_list_service).await?;
                                 all_known_rooms.insert(*insert_index, new_room.clone());
                                 next_diff_was_handled = true;
                             }
@@ -1393,7 +1464,7 @@ async fn async_main_loop(
                     ALL_ROOM_INFO.lock().unwrap().clear();
                     enqueue_rooms_list_update(RoomsListUpdate::ClearRooms);
                     for room in &new_rooms {
-                        add_new_room(room).await?;
+                        add_new_room(room, &room_list_service).await?;
                     }
                     all_known_rooms = new_rooms;
                 }
@@ -1409,6 +1480,7 @@ async fn async_main_loop(
 async fn update_room(
     old_room: &room_list_service::Room,
     new_room: &room_list_service::Room,
+    room_list_service: &RoomListService,
 ) -> Result<()> {
     let new_room_id = new_room.room_id().to_owned();
     let mut room_avatar_changed = false;
@@ -1444,6 +1516,13 @@ async fn update_room(
                 new_tags,
             });
         }
+
+        enqueue_rooms_list_update(RoomsListUpdate::UpdateNumUnreadMessages {
+            room_id: new_room_id.clone(),
+            count: UnreadMessageCount::Known(new_room.num_unread_messages()),
+            unread_mentions: new_room.num_unread_mentions()
+        });
+
         Ok(())
     }
     else {
@@ -1451,7 +1530,7 @@ async fn update_room(
             old_room.room_id(), new_room_id,
         );
         remove_room(old_room);
-        add_new_room(new_room).await
+        add_new_room(new_room, room_list_service).await
     }
 }
 
@@ -1466,7 +1545,7 @@ fn remove_room(room: &room_list_service::Room) {
 
 
 /// Invoked when the room list service has received an update with a brand new room.
-async fn add_new_room(room: &room_list_service::Room) -> Result<()> {
+async fn add_new_room(room: &room_list_service::Room, room_list_service: &RoomListService) -> Result<()> {
     let room_id = room.room_id().to_owned();
 
     // NOTE: the call to `sync_up()` never returns, so I'm not sure how to force a room to fully sync.
@@ -1479,6 +1558,8 @@ async fn add_new_room(room: &room_list_service::Room) -> Result<()> {
     //     log!("Room {room_id} is now fully synced? {}", room.is_state_fully_synced());
     // }
 
+    // This will sync the room
+    room_list_service.subscribe_to_rooms(&[&room_id]);
 
     // Do not add tombstoned rooms to the rooms list; they require special handling.
     if let Some(tombstoned_info) = room.tombstone() {
@@ -1532,6 +1613,8 @@ async fn add_new_room(room: &room_list_service::Room) -> Result<()> {
         room_id: room_id.clone(),
         latest,
         tags: room.tags().await.ok().flatten(),
+        num_unread_messages: room.num_unread_messages(),
+        num_unread_mentions: room.num_unread_mentions(),
         // start with a basic text avatar; the avatar image will be fetched asynchronously below.
         avatar: avatar_from_room_name(room_name.as_deref().unwrap_or_default()),
         room_name,
@@ -2109,13 +2192,13 @@ fn spawn_fetch_room_avatar(room: Room) {
 /// Fetches and returns the avatar image for the given room (if one exists),
 /// otherwise returns a text avatar string of the first character of the room name.
 async fn room_avatar(room: &Room, room_name: &Option<String>) -> RoomPreviewAvatar {
-    match room.avatar(MEDIA_THUMBNAIL_FORMAT.into()).await {
+    match room.avatar(AVATAR_THUMBNAIL_FORMAT.into()).await {
         Ok(Some(avatar)) => RoomPreviewAvatar::Image(avatar),
         _ => {
             if let Ok(room_members) = room.members(RoomMemberships::ACTIVE).await {
                 if room_members.len() == 2 {
                     if let Some(non_account_member) = room_members.iter().find(|m| !m.is_account_user()) {
-                        return match non_account_member.avatar(MEDIA_THUMBNAIL_FORMAT.into()).await {
+                        return match non_account_member.avatar(AVATAR_THUMBNAIL_FORMAT.into()).await {
                             Ok(Some(avatar)) => RoomPreviewAvatar::Image(avatar),
                             _ => avatar_from_room_name(room_name.as_deref().unwrap_or_default()),
                         };
@@ -2155,15 +2238,23 @@ async fn spawn_sso_server(
     login_sender: Sender<LoginRequest>,
 ) {
     Cx::post_action(LoginAction::SsoPending(true));
-    Cx::post_action(LoginAction::Status(String::from("Opening Browser ...")));
+    Cx::post_action(LoginAction::Status {
+        title: "Opening your browser...".into(),
+        status: "Please finish logging in using your browser, and then come back to Robrix.".into(),
+    });
     let cli = Cli {
         homeserver: homeserver_url.is_empty().not().then_some(homeserver_url),
         ..Default::default()
     };
     Handle::current().spawn(async move {
-        let Ok((client, client_session)) = build_client(&cli, app_data_dir()).await else {
-            Cx::post_action(LoginAction::LoginFailure("Failed to establish client".to_string()));
-            return;
+        let (client, client_session) = match build_client(&cli, app_data_dir()).await {
+            Ok(success) => success,
+            Err(e) => {
+                Cx::post_action(LoginAction::LoginFailure(
+                    format!("Could not create client object.\n\nError: {e}")
+                ));
+                return;
+            }
         };
         let mut is_logged_in = false;
         match client
@@ -2200,7 +2291,7 @@ async fn spawn_sso_server(
                     }
                     enqueue_rooms_list_update(RoomsListUpdate::Status {
                         status: format!(
-                            "Logged in as {:?}. Loading rooms...",
+                            "Logged in as {:?}.\n → Loading rooms...",
                             &identity_provider_res.user_id
                         ),
                     });
@@ -2208,8 +2299,8 @@ async fn spawn_sso_server(
             }
             Err(e) => {
                 if !is_logged_in {
-                    error!("Login by SSO failed: {e:?}");
-                    Cx::post_action(LoginAction::LoginFailure(format!("Login by SSO failed {e}")));
+                    error!("SSO Login failed: {e:?}");
+                    Cx::post_action(LoginAction::LoginFailure(format!("SSO login failed: {e}")));
                 }
             }
         }

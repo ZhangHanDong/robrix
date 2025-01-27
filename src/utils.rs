@@ -1,8 +1,28 @@
 use std::{borrow::Cow, time::SystemTime};
 
 use chrono::{DateTime, Duration, Local, TimeZone};
-use makepad_widgets::{error, image_cache::ImageError, Cx, ImageRef};
+use makepad_widgets::{error, image_cache::ImageError, Cx, Event, ImageRef};
 use matrix_sdk::{media::{MediaFormat, MediaThumbnailSettings, MediaThumbnailSize}, ruma::{api::client::media::get_content_thumbnail::v3::Method, MilliSecondsSinceUnixEpoch}};
+
+
+/// Returns true if the given event is an interactive hit-related event
+/// that should require a view/widget to be visible in order to handle/receive it.
+pub fn is_interactive_hit_event(event: &Event) -> bool {
+    matches!(
+        event,
+        Event::MouseDown(..)
+        | Event::MouseUp(..)
+        | Event::MouseMove(..)
+        | Event::MouseLeave(..)
+        | Event::TouchUpdate(..)
+        | Event::Scroll(..)
+        | Event::KeyDown(..)
+        | Event::KeyUp(..)
+        | Event::TextInput(..)
+        | Event::TextCopy(..)
+        | Event::TextCut(..)
+    )
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ImageFormat {
@@ -177,13 +197,25 @@ impl From<MediaThumbnailSizeConst> for MediaThumbnailSize {
     }
 }
 
-/// The default media format to use for thumbnail requests.
-pub const MEDIA_THUMBNAIL_FORMAT: MediaFormatConst = MediaFormatConst::Thumbnail(
+/// The avatar format to use for thumbnail requests.
+pub const AVATAR_THUMBNAIL_FORMAT: MediaFormatConst = MediaFormatConst::Thumbnail(
     MediaThumbnailSettingsConst {
         size: MediaThumbnailSizeConst {
             method: Method::Scale,
             width: 40,
             height: 40,
+        },
+        animated: false,
+    }
+);
+
+/// The timeline image format to use for thumbnail requests.
+pub const TIMELINE_IMAGE_THUMBNAIL_FORMAT: MediaFormatConst = MediaFormatConst::Thumbnail(
+    MediaThumbnailSettingsConst {
+        size: MediaThumbnailSizeConst {
+            method: Method::Scale,
+            width: 400,
+            height: 400,
         },
         animated: false,
     }
@@ -233,9 +265,9 @@ pub fn linkify(text: &str, is_html: bool) -> Cow<'_, str> {
         let link_txt = link.as_str();
         // Only linkify the URL if it's not already part of an HTML href attribute.
         let is_link_within_href_attr = text.get(..link.start())
-            .map_or(false, ends_with_href);
+            .is_some_and(ends_with_href);
         let is_link_within_html_tag = text.get(link.end() ..)
-            .map_or(false, |after| after.trim_end().starts_with("</a>"));
+            .is_some_and(|after| after.trim_end().starts_with("</a>"));
 
         if is_link_within_href_attr || is_link_within_html_tag {
             linkified_text = format!(
@@ -310,7 +342,95 @@ pub fn ends_with_href(text: &str) -> bool {
     substr.trim_end().ends_with("href")
 }
 
+/// Converts a list of names into a human-readable string with a limit parameter.
+///
+/// # Examples
+/// ```
+/// assert_eq!(human_readable_list(&vec!["Alice"], 3), String::from("Alice"));
+/// assert_eq!(human_readable_list(&vec![String::from("Alice"), String::from("Bob")], 3), String::from("Alice and Bob"));
+/// assert_eq!(human_readable_list(&vec!["Alice", "Bob", "Charlie"], 3), String::from("Alice, Bob and Charlie"));
+/// assert_eq!(human_readable_list(&vec!["Alice", "Bob", "Charlie", "Dennis", "Eudora", "Fanny"], 3), String::from("Alice, Bob, Charlie, and 3 others"));
+/// ```
+pub fn human_readable_list<S>(names: &[S], limit: usize) -> String
+where
+    S: AsRef<str>
+{
+    let mut result = String::new();
+    match names.len() {
+        0 => return result, // early return if no names provided
+        1 => {
+            result.push_str(names[0].as_ref());
+        },
+        2 => {
+            result.push_str(names[0].as_ref());
+            result.push_str(" and ");
+            result.push_str(names[1].as_ref());
+        },
+        _ => {
+            let display_count = names.len().min(limit);
+            for (i, name) in names.iter().take(display_count - 1).enumerate() {
+                if i > 0 {
+                    result.push_str(", ");
+                }
+                result.push_str(name.as_ref());
+            }
+            if names.len() > limit {
+                let remaining = names.len() - limit;
+                result.push_str(", ");
+                result.push_str(names[display_count - 1].as_ref());
+                result.push_str(", and ");
+                if remaining == 1 {
+                    result.push_str("1 other");
+                } else {
+                    result.push_str(&format!("{} others", remaining));
+                }
+            } else {
+                result.push_str(" and ");
+                result.push_str(names[display_count - 1].as_ref());
+            }
+        }
+    };
+    result
+}
 
+#[cfg(test)]
+mod tests_human_readable_list {
+    use super::*;
+    #[test]
+    fn test_human_readable_list_empty() {
+        let names: Vec<&str> = Vec::new();
+        let result = human_readable_list(&names, 3);
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_human_readable_list_single() {
+        let names: Vec<&str> = vec!["Alice"];
+        let result = human_readable_list(&names, 3);
+        assert_eq!(result, "Alice");
+    }
+
+    #[test]
+    fn test_human_readable_list_two() {
+        let names: Vec<&str> = vec!["Alice", "Bob"];
+        let result = human_readable_list(&names, 3);
+        assert_eq!(result, "Alice and Bob");
+    }
+
+    #[test]
+    fn test_human_readable_list_many() {
+        let names: Vec<&str> = vec!["Alice", "Bob", "Charlie", "David"];
+        let result = human_readable_list(&names, 3);
+        assert_eq!(result, "Alice, Bob, Charlie, and 1 other");
+    }
+
+    #[test]
+    fn test_human_readable_list_long() {
+        let names: Vec<&str> = vec!["Alice", "Bob", "Charlie", "Dennis", "Eudora", "Fanny", "Gina", "Hiroshi", "Ivan", "James", "Karen", "Lisa", "Michael", "Nathan", "Oliver", "Peter", "Quentin", "Rachel", "Sally", "Tanya", "Ulysses", "Victor", "William", "Xenia", "Yuval", "Zachariah"];
+        let result = human_readable_list(&names, 3);
+        assert_eq!(result, "Alice, Bob, Charlie, and 23 others");
+    }
+}
 
 #[cfg(test)]
 mod tests_linkify {

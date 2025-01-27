@@ -2,10 +2,7 @@ use makepad_widgets::*;
 use matrix_sdk::ruma::OwnedRoomId;
 
 use crate::{
-    home::{main_desktop_ui::RoomsPanelAction, rooms_list::RoomListAction},
-    verification::VerificationAction,
-    verification_modal::{VerificationModalAction, VerificationModalWidgetRefExt},
-    login::login_screen::LoginAction,
+    home::{main_desktop_ui::RoomsPanelAction, room_screen::MessageAction, rooms_list::RoomsListAction}, login::login_screen::LoginAction, shared::popup_list::PopupNotificationAction, verification::VerificationAction, verification_modal::{VerificationModalAction, VerificationModalWidgetRefExt}
 };
 
 live_design! {
@@ -18,7 +15,8 @@ live_design! {
     use crate::profile::my_profile_screen::MyProfileScreen;
     use crate::verification_modal::VerificationModal;
     use crate::login::login_screen::LoginScreen;
-
+    use crate::shared::popup_list::PopupList;
+    
     ICON_CHAT = dep("crate://self/resources/icons/chat.svg")
     ICON_CONTACTS = dep("crate://self/resources/icons/contacts.svg")
     ICON_DISCOVER = dep("crate://self/resources/icons/discover.svg")
@@ -121,12 +119,23 @@ live_design! {
                         visible: true
                         login_screen = <LoginScreen> {}
                     }
-
+                    popup = <PopupNotification> {
+                        margin: {top: 45, right: 13},
+                        content: {
+                            <PopupList> {}
+                        }
+                    }
                     verification_modal = <Modal> {
                         content: {
                             verification_modal_inner = <VerificationModal> {}
                         }
                     }
+                    
+                    // message_source_modal = <Modal> {
+                    //     content: {
+                    //         message_source_modal_inner = <MessageSourceModal> {}
+                    //     }
+                    // }
                 }
             } // end of body
         }
@@ -160,19 +169,19 @@ impl LiveRegister for App {
 }
 
 impl LiveHook for App {
-    fn after_update_from_doc(&mut self, _cx:&mut Cx) {
-        self.update_login_visibility();
+    fn after_update_from_doc(&mut self, cx: &mut Cx) {
+        self.update_login_visibility(cx);
     }
 }
 
 impl MatchEvent for App {
-    fn handle_startup(&mut self, _cx: &mut Cx) {
+    fn handle_startup(&mut self, cx: &mut Cx) {
         // Initialize the project directory here from the main UI thread
         // such that background threads/tasks will be able to can access it.
         let _app_data_dir = crate::app_data_dir();
         log!("App::handle_startup(): app_data_dir: {:?}", _app_data_dir);
 
-        self.update_login_visibility();
+        self.update_login_visibility(cx);
 
         log!("App::handle_startup(): starting matrix sdk loop");
         crate::sliding_sync::start_matrix_tokio().unwrap();
@@ -183,13 +192,21 @@ impl MatchEvent for App {
             if let Some(LoginAction::LoginSuccess) = action.downcast_ref() {
                 log!("Received LoginAction::LoginSuccess, hiding login view.");
                 self.app_state.logged_in = true;
-                self.update_login_visibility();
+                self.update_login_visibility(cx);
                 self.ui.redraw(cx);
             }
-
+            match action.downcast_ref() {
+                Some(PopupNotificationAction::Open) => {
+                    self.ui.popup_notification(id!(popup)).open(cx);
+                }
+                Some(PopupNotificationAction::Close) => {
+                    self.ui.popup_notification(id!(popup)).close(cx);
+                }
+                _ => {}
+            }
             match action.as_widget_action().cast() {
                 // A room has been selected, update the app state and navigate to the main content view.
-                RoomListAction::Selected {
+                RoomsListAction::Selected {
                     room_id,
                     room_index: _,
                     room_name,
@@ -209,10 +226,10 @@ impl MatchEvent for App {
                     );
                     // Update the Stack Navigation header with the room name
                     self.ui.label(id!(main_content_view.header.content.title_container.title))
-                        .set_text(&room_name.unwrap_or_else(|| format!("Room ID {}", &room_id)));
+                        .set_text(cx, &room_name.unwrap_or_else(|| format!("Room ID {}", &room_id)));
                     self.ui.redraw(cx);
                 }
-                RoomListAction::None => { }
+                RoomsListAction::None => { }
             }
 
             match action.as_widget_action().cast() {
@@ -231,12 +248,24 @@ impl MatchEvent for App {
             // Note: other verification actions are handled by the verification modal itself.
             if let Some(VerificationAction::RequestReceived(state)) = action.downcast_ref() {
                 self.ui.verification_modal(id!(verification_modal_inner))
-                    .initialize_with_data(state.clone());
+                    .initialize_with_data(cx, state.clone());
                 self.ui.modal(id!(verification_modal)).open(cx);
             }
 
             if let VerificationModalAction::Close = action.as_widget_action().cast() {
                 self.ui.modal(id!(verification_modal)).close(cx);
+            }
+
+            // message source modal handling.
+            match action.as_widget_action().cast() {
+                MessageAction::MessageSourceModalOpen { room_id: _, event_id: _, original_json: _ } => {
+                   // self.ui.message_source(id!(message_source_modal_inner)).initialize_with_data(room_id, event_id, original_json);
+                   // self.ui.modal(id!(message_source_modal)).open(cx);
+                }
+                MessageAction::MessageSourceModalClose => {
+                    self.ui.modal(id!(message_source_modal)).close(cx);
+                }
+                _ => {}
             }
         }
     }
@@ -268,6 +297,9 @@ impl MatchEvent for App {
 
 impl AppMain for App {
     fn handle_event(&mut self, cx: &mut Cx, event: &Event) {
+        if let Event::WindowGeomChange(window_geom_change_event) = event {
+            self.app_state.window_geom = Some(window_geom_change_event.new_geom.clone());
+        }
         // Forward events to the MatchEvent trait impl, and then to the App's UI element.
         self.match_event(cx, event);
         let scope = &mut Scope::with_data(&mut self.app_state);
@@ -276,10 +308,15 @@ impl AppMain for App {
 }
 
 impl App {
-    fn update_login_visibility(&self) {
-        let login_visible = !self.app_state.logged_in;
-        self.ui.view(id!(login_screen_view)).set_visible(login_visible);
-        self.ui.view(id!(home_screen_view)).set_visible(!login_visible);
+    fn update_login_visibility(&self, cx: &mut Cx) {
+        let show_login = !self.app_state.logged_in;
+        self.ui.view(id!(login_screen_view)).set_visible(cx, show_login);
+        self.ui.view(id!(home_screen_view)).set_visible(cx, !show_login);
+        if !show_login {
+            self.ui
+                .modal(id!(login_screen_view.login_screen.login_status_modal))
+                .close(cx);
+        }
     }
 }
 
@@ -287,6 +324,8 @@ impl App {
 pub struct AppState {
     pub rooms_panel: RoomsPanelState,
     pub logged_in: bool,
+    /// The current window geometry.
+    pub window_geom: Option<event::WindowGeom>,
 }
 
 #[derive(Default, Debug)]
@@ -308,4 +347,3 @@ impl PartialEq for SelectedRoom {
     }
 }
 impl Eq for SelectedRoom {}
-

@@ -2,7 +2,6 @@ use makepad_widgets::*;
 
 use crate::{
     shared::{
-        adaptive_view::{AdaptiveViewWidgetExt, DisplayContext},
         avatar::AvatarWidgetExt,
         html_or_plaintext::HtmlOrPlaintextWidgetExt,
     },
@@ -10,7 +9,6 @@ use crate::{
 };
 
 use super::rooms_list::{RoomPreviewAvatar, RoomsListEntry};
-
 live_design! {
     use link::theme::*;
     use link::shaders::*;
@@ -19,8 +17,9 @@ live_design! {
     use crate::shared::styles::*;
     use crate::shared::helpers::*;
     use crate::shared::avatar::Avatar;
-    use crate::shared::adaptive_view::AdaptiveView;
     use crate::shared::html_or_plaintext::HtmlOrPlaintext;
+    pub UNREAD_HIGHLIGHT_COLOR = #FF0000;
+    pub UNREAD_DEFAULT_COLOR = #d8d8d8;
 
     RoomName = <Label> {
         width: Fill, height: Fit
@@ -102,37 +101,83 @@ live_design! {
         }
     }
 
+    UnreadBadge = <View> {
+        width: 16.0, height: 16.0
+        show_bg: true
+        align: { x: 0.5, y: 0.5 }
+        draw_bg: {
+            instance highlight: 0.0,
+            instance highlight_color: (UNREAD_HIGHLIGHT_COLOR),
+            instance default_color: (UNREAD_DEFAULT_COLOR),
+            fn pixel(self) -> vec4 {
+                let sdf = Sdf2d::viewport(self.pos * self.rect_size);
+                let c = self.rect_size * 0.5;
+                sdf.circle(c.x, c.x, c.x)
+                sdf.fill_keep(mix(self.default_color, self.highlight_color, self.highlight));
+                return sdf.result
+            }
+        }
+        unread_message_count = <Label> {
+            text: "?"
+            draw_text:{
+                color: #FFF
+                text_style: <TIMESTAMP_TEXT_STYLE>{
+                    font_size: 7.5
+                },
+            }
+        }
+    }
+
     pub RoomPreview = {{RoomPreview}} {
+        flow: Down, height: Fit
+
         // Wrap the RoomPreviewContent in an AdaptiveView to change the displayed content
         // (and its layout) based on the available space in the sidebar.
         adaptive_preview = <AdaptiveView> {
+            height: Fit
+
             OnlyIcon = <RoomPreviewContent> {
                 align: {x: 0.5, y: 0.5}
                 padding: 5.
-                avatar = <Avatar> {}
+                <View> {
+                    height: Fit
+                    flow: Overlay
+                    align: { x: 1.0 }
+                    avatar = <Avatar> {}
+                    unread_badge = <UnreadBadge> {}
+                }
             }
             IconAndName = <RoomPreviewContent> {
                 padding: 5.
                 align: {x: 0.5, y: 0.5}
                 avatar = <Avatar> {}
                 room_name = <RoomName> {}
+                unread_badge = <UnreadBadge> {}
             }
             FullPreview = <RoomPreviewContent> {
                 avatar = <Avatar> {}
                 <View> {
-                    flow: Down
-                    width: Fill, height: 60
-                    spacing: 5
-                    header = <View> {
-                        width: Fill, height: Fit
-                        flow: Right
-                        spacing: 10.
-                        align: {y: 0.5}
-
+                    flow: Right
+                    width: Fill, height: 56
+                    align: { x: 0.5, y: 0.5 }
+                    left = <View> {
+                        width: Fill, height: Fill,
+                        flow: Down,
                         room_name = <RoomName> {}
-                        timestamp = <Timestamp> {}
+                        preview = <MessagePreview> {}
                     }
-                    preview = <MessagePreview> {}
+                    right = <View> {
+                        width: Fit, height: Fill,
+                        flow: Down,
+                        timestamp = <Timestamp> {}
+                        <View> {
+                            width: Fill, height: Fill
+                            align: { x: 1.0 }
+                            unread_badge = <UnreadBadge> {
+                                margin: { top: 5. } // Align the badge with the timestamp, same as the message preview's margin top.
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -152,11 +197,11 @@ pub enum RoomPreviewAction {
 }
 
 impl LiveHook for RoomPreview {
-    fn after_new_from_doc(&mut self, cx: &mut Cx) {
+    fn after_new_from_doc(&mut self, _cx: &mut Cx) {
         // Adapt the preview based on the available space.
         self.view
             .adaptive_view(id!(adaptive_preview))
-            .set_variant_selector(cx, |_cx, parent_size| match parent_size.x {
+            .set_variant_selector(|_cx, parent_size| match parent_size.x {
                 width if width <= 70.0  => live_id!(OnlyIcon),
                 width if width <= 200.0 => live_id!(IconAndName),
                 _ => live_id!(FullPreview),
@@ -211,31 +256,59 @@ impl Widget for RoomPreviewContent {
     fn draw_walk(&mut self, cx: &mut Cx2d, scope: &mut Scope, walk: Walk) -> DrawStep {
         if let Some(room_info) = scope.props.get::<RoomsListEntry>() {
             if let Some(ref name) = room_info.room_name {
-                self.view.label(id!(room_name)).set_text(name);
+                self.view.label(id!(room_name)).set_text(cx, name);
             }
             if let Some((ts, msg)) = room_info.latest.as_ref() {
                 if let Some(human_readable_date) = relative_format(ts) {
                     self.view
                         .label(id!(timestamp))
-                        .set_text(&human_readable_date);
+                        .set_text(cx, &human_readable_date);
                 }
                 self.view
                     .html_or_plaintext(id!(latest_message))
-                    .show_html(msg);
+                    .show_html(cx, msg);
             }
             match room_info.avatar {
                 RoomPreviewAvatar::Text(ref text) => {
-                    self.view.avatar(id!(avatar)).show_text(None, text);
+                    self.view.avatar(id!(avatar)).show_text(cx, None, text);
                 }
                 RoomPreviewAvatar::Image(ref img_bytes) => {
                     let _ = self.view.avatar(id!(avatar)).show_image(
+                        cx,
                         None, // don't make room preview avatars clickable.
-                        |img| utils::load_png_or_jpg(&img, cx, img_bytes),
+                        |cx, img| utils::load_png_or_jpg(&img, cx, img_bytes),
                     );
                 }
             }
 
-            if cx.get_global::<DisplayContext>().is_desktop() {
+            let unread_badge = self.view(id!(unread_badge)); 
+            // Helper function to format the unread count, display "99+" if greater than 99
+            fn format_unread_count(count: u64) -> String {
+                if count > 99 {
+                    "99+".to_string()
+                } else {
+                    count.to_string()
+                }
+            }
+            if room_info.num_unread_mentions > 0 {
+                // If there are unread mentions, show red badge and the number of unread mentions
+                unread_badge.apply_over(cx, live!{ draw_bg: { highlight: 1.0 }});
+                unread_badge
+                    .label(id!(unread_message_count))
+                    .set_text(cx, &format_unread_count(room_info.num_unread_mentions));
+                unread_badge.set_visible(cx, true);
+            } else if room_info.num_unread_messages > 0 {
+                // If there are no unread mentions but there are unread messages, show gray badge and the number of unread messages
+                unread_badge.apply_over(cx, live!{ draw_bg: { highlight: 0.0 }});
+                unread_badge
+                    .label(id!(unread_message_count))
+                    .set_text(cx, &format_unread_count(room_info.num_unread_messages));
+                unread_badge.set_visible(cx, true);
+            } else {
+                // If there are no unread mentions and no unread messages, hide the badge
+                unread_badge.set_visible(cx, false);
+            }
+            if cx.display_context.is_desktop() {
                 self.update_preview_colors(cx, room_info.is_selected);
             } else if room_info.is_selected {
                 // Mobile doesn't have a selected state. Always use the default colors.
