@@ -8,7 +8,9 @@ use crate::sliding_sync::{submit_async_request, MatrixRequest};
 use crate::avatar_cache::*;
 use crate::utils;
 use crate::shared::adaptive_view::DisplayContext;
+use crate::shared::command_input_bar::*;
 
+// 定义组件的视觉设计
 live_design! {
     use link::theme::*;
     use link::shaders::*;
@@ -18,57 +20,59 @@ live_design! {
     use crate::shared::icon_button::*;
     use crate::shared::avatar::Avatar;
     use crate::shared::helpers::FillerX;
+    use crate::shared::command_input_bar::*;
 
     ICO_LOCATION_PERSON = dep("crate://self/resources/icons/location-person.svg")
     ICO_SEND = dep("crate://self/resources/icon_send.svg")
 
-    // 用户列表项模板定义
-    UserListItem = <View> {
-        width: Fill,
-        height: Fit,
-        padding: {left: 8., right: 8., top: 4., bottom: 4.}
-        show_bg: true
-        draw_bg: {color: #fff}
-        flow: Down  // Default to vertical flow for mobile
-        spacing: 8.0
+    // // 定义用户列表项的视觉模板
+    // UserListItem = <View> {
+    //     width: Fill,
+    //     height: Fit,
+    //     padding: {left: 8., right: 8., top: 4., bottom: 4.}
+    //     show_bg: true
+    //     draw_bg: {color: #fff}
+    //     flow: Down
+    //     spacing: 8.0
 
-        // Container for avatar and username (will be horizontal in both layouts)
-        user_info = <View> {
-            width: Fill,
-            height: Fit,
-            flow: Right,
-            spacing: 8.0
-            align: {y: 0.5}
+    //     // 用户信息容器 (头像和用户名)
+    //     user_info = <View> {
+    //         width: Fill,
+    //         height: Fit,
+    //         flow: Right,
+    //         spacing: 8.0
+    //         align: {y: 0.5}
 
-            avatar = <Avatar> {
-                width: 24,
-                height: 24,
-                text_view = { text = { draw_text: {
-                    text_style: { font_size: 12.0 }
-                }}}
-            }
+    //         avatar = <Avatar> {
+    //             width: 24,
+    //             height: 24,
+    //             text_view = { text = { draw_text: {
+    //                 text_style: { font_size: 12.0 }
+    //             }}}
+    //         }
 
-            label = <Label> {
-                height: Fit,
-                draw_text: {
-                    color: #000,
-                    text_style: {font_size: 14.0}
-                }
-            }
+    //         label = <Label> {
+    //             height: Fit,
+    //             draw_text: {
+    //                 color: #000,
+    //                 text_style: {font_size: 14.0}
+    //             }
+    //         }
 
-            filler = <FillerX> {}
-        }
+    //         filler = <FillerX> {}
+    //     }
 
-        // Matrix URL (will be positioned differently based on layout)
-        matrix_url = <Label> {
-            height: Fit,
-            draw_text: {
-                color: #666,
-                text_style: {font_size: 12.0}
-            }
-        }
-    }
+    //     // Matrix ID 显示
+    //     matrix_url = <Label> {
+    //         height: Fit,
+    //         draw_text: {
+    //             color: #666,
+    //             text_style: {font_size: 12.0}
+    //         }
+    //     }
+    // }
 
+    // 主组件设计
     pub MentionInputBar = {{MentionInputBar}} {
         width: Fill,
         height: Fit
@@ -78,16 +82,17 @@ live_design! {
         show_bg: true
         draw_bg: {color: (COLOR_PRIMARY)}
 
-        // 位置按钮配置
+        // 位置按钮
         location_button = <IconButton> {
             draw_icon: {svg_file: (ICO_LOCATION_PERSON)},
             icon_walk: {width: 22.0, height: Fit, margin: {left: 0, right: 5}},
             text: "",
         }
 
-        user_list_item: <UserListItem> {}
+        // user_list_item: <UserListItem> {}
 
-        message_input = <CommandTextInput> {
+        // 消息输入区域
+        message_input = <CommandInputBar> {
             width: Fill,
             height: Fit
             margin: 0
@@ -96,14 +101,14 @@ live_design! {
             keyboard_focus_color: (THEME_COLOR_CTRL_HOVER)
             pointer_hover_color: (THEME_COLOR_CTRL_HOVER * 0.85)
 
-            use_separate_search: false
-
-            // Configure the popup search area
             popup = {
-                search_input = {}
+                show_bg: true
+                draw_bg: { color: #fff }
+                padding: { top: 4.0, bottom: 4.0 }
+
                 list = {
-                    height: 200.0  // Fixed height in pixels
-                    clip_y: true
+                    width: Fill
+                    height: 200.
                 }
             }
 
@@ -119,10 +124,9 @@ live_design! {
                     }
                 }
             }
-
         }
 
-        // 发送按钮配置
+        // 发送按钮
         send_message_button = <IconButton> {
             draw_icon: {svg_file: (ICO_SEND)},
             icon_walk: {width: 18.0, height: Fit},
@@ -130,21 +134,22 @@ live_design! {
     }
 }
 
-// Define the actions that our component can emit
+// 组件动作定义
 #[derive(Clone, Debug)]
 pub enum MentionInputBarAction {
     MessageChanged(String),
     UserMentioned(String),
 }
 
-// Main component implementation
+// 组件主结构
 #[derive(Live, Widget)]
 pub struct MentionInputBar {
     #[deref]
     view: View,
-    // Store the template for user list items
+    // 用户列表项模板
     #[live]
     user_list_item: Option<LivePtr>,
+    // 组件状态
     #[rust]
     room_id: Option<OwnedRoomId>,
     #[rust]
@@ -154,34 +159,31 @@ pub struct MentionInputBar {
     #[rust]
     mention_start_index: Option<usize>,
     #[rust]
-    needs_update: bool,
-    #[rust]
     is_searching: bool,
 }
 
+// 实现组件的 LiveHook 特性
 impl LiveHook for MentionInputBar {
     fn after_new_from_doc(&mut self, cx: &mut Cx) {
-        // Set initial focus to the input field
-        self.command_text_input(id!(message_input))
+        // 设置初始焦点到输入框
+        self.command_input_bar(id!(message_input))
             .text_input_ref()
             .set_key_focus(cx);
     }
 }
 
+// 实现组件的 Widget 特性
 impl Widget for MentionInputBar {
     fn draw_walk(&mut self, cx: &mut Cx2d, scope: &mut Scope, walk: Walk) -> DrawStep {
-        // 首先开始绘制基础视图
         let mut ret = self.view.draw_walk(cx, scope, walk);
 
-        // 获取文本输入组件的引用并处理 IME
-        let message_input = self.command_text_input(id!(message_input));
+        // 处理输入法编辑器位置
+        let message_input = self.command_input_bar(id!(message_input));
         let text_input = message_input.text_input_ref();
-
-        // 获取输入区域并设置 IME 位置
         let area = text_input.area();
         cx.show_text_ime(area, DVec2::default());
 
-        // 继续绘制，直到所有子组件都完成绘制
+        // 完成所有子组件的绘制
         while !ret.is_done() {
             ret = self.view.draw_walk(cx, scope, walk);
         }
@@ -191,61 +193,26 @@ impl Widget for MentionInputBar {
 
     fn handle_event(&mut self, cx: &mut Cx, event: &Event, scope: &mut Scope) {
         let widget_uid = self.widget_uid();
-        let mut message_input = self.command_text_input(id!(message_input));
+        let command_input = self.command_input_bar(id!(message_input));
 
         if let Event::Actions(actions) = event {
-            // 1. 处理用户选择
-            if let Some(selected) = message_input.item_selected(actions) {
-                let username = selected.label(id!(user_info.label)).text();
-                if let Some(start_idx) = self.mention_start_index {
-                    let mut current_text = self.current_input.clone();
-                    let before_mention = &current_text[..start_idx];
-                    let after_mention = &current_text[message_input.text_input_ref().borrow()
-                        .map_or(0, |p| p.get_cursor().head.index)..];
+            // 1. 检查是否需要构建项目列表
+            if command_input.should_build_items(actions) {
+                let search_text = command_input.search_text();
+                log!("Should build items triggered with search text: {}", search_text);
 
-                    let new_text = format!("{} {} {}", before_mention, username, after_mention);
-                    self.set_text(cx, &new_text);
-
-                    // 重置状态并关闭弹框
-                    self.mention_start_index = None;
-                    self.is_searching = false;
-                    message_input.view(id!(popup)).set_visible(false);
-                }
-
-                cx.widget_action(
-                    widget_uid,
-                    &scope.path,
-                    MentionInputBarAction::UserMentioned(username),
-                );
+                self.show_user_list(cx, command_input.clone(), &search_text);
+                return;
             }
 
             // 2. 处理文本变化
-            if let Some(action) = actions.find_widget_action(message_input.text_input_ref().widget_uid()) {
+            if let Some(action) = actions.find_widget_action(command_input.text_input_ref().widget_uid()) {
                 if let TextInputAction::Change(text) = action.cast() {
                     self.current_input = text.clone();
-                    let cursor_pos = message_input.text_input_ref().borrow()
-                        .map_or(0, |p| p.get_cursor().head.index);
 
-                    // 检查当前光标位置是否在任何已存在的 @ 后面
-                    let prev_at_pos = text[..cursor_pos].rfind('@')
-                        .filter(|&idx| !text[idx..cursor_pos].contains(char::is_whitespace));
-
-                    if text.chars().nth(cursor_pos.saturating_sub(1)) == Some('@') {
-                        // 新输入了 @
-                        self.mention_start_index = Some(cursor_pos - 1);
-                        self.is_searching = true;
-                        self.show_user_list(cx, &mut message_input, "");
-                    } else if let Some(start_idx) = prev_at_pos {
-                        // 光标在已存在的 @ 后面
-                        self.mention_start_index = Some(start_idx);
-                        self.is_searching = true;
-                        let search_text = text[start_idx + 1..cursor_pos].to_lowercase();
-                        self.show_user_list(cx, &mut message_input, &search_text);
-                    } else {
-                        // 不在任何 @ 上下文中
-                        self.mention_start_index = None;
-                        self.is_searching = false;
-                        message_input.view(id!(popup)).set_visible(false);
+                    // 检查是否应该隐藏弹出框
+                    if !text.contains('@') {
+                        command_input.reset(cx);
                     }
 
                     cx.widget_action(
@@ -254,24 +221,31 @@ impl Widget for MentionInputBar {
                         MentionInputBarAction::MessageChanged(text),
                     );
                 }
+            }
 
-                // 3. 处理特殊键盘事件
-                if let TextInputAction::KeyDownUnhandled(ke) = action.cast() {
-                    match ke.key_code {
-                        KeyCode::Escape => {
-                            if self.is_searching {
-                                self.mention_start_index = None;
-                                self.is_searching = false;
-                                message_input.view(id!(popup)).set_visible(false);
-                                self.redraw(cx);
-                            }
-                        }
-                        KeyCode::ArrowUp | KeyCode::ArrowDown if self.is_searching => {
-                            message_input.view(id!(popup)).set_visible(true);
-                        }
-                        _ => {}
-                    }
-                }
+            // 3. 处理用户选择
+            if let Some(selected) = command_input.item_selected(actions) {
+                let username = selected.label(id!(user_info.label)).text();
+
+                // 在选择后重置输入状态
+                command_input.reset(cx);
+
+                cx.widget_action(
+                    widget_uid,
+                    &scope.path,
+                    MentionInputBarAction::UserMentioned(username),
+                );
+            }
+        }
+
+        // 4. 处理键盘事件
+        if let Event::KeyDown(key_event) = event {
+            match key_event.key_code {
+                KeyCode::Escape => {
+                    // 按ESC时重置状态
+                    command_input.reset(cx);
+                },
+                _ => {}
             }
         }
 
@@ -279,91 +253,144 @@ impl Widget for MentionInputBar {
     }
 }
 
-// Implement public methods for the component
+// 组件方法实现
 impl MentionInputBar {
-    fn show_user_list(&mut self, cx: &mut Cx, message_input: &mut CommandTextInputRef, search_text: &str) {
-        self.update_user_list(cx, message_input, search_text);
-        message_input.view(id!(popup)).set_visible(true);
-        self.redraw(cx);
+    // 显示用户列表
+    pub fn show_user_list(&mut self, cx: &mut Cx, mut command_input: CommandInputBarRef, search_text: &str) {
+        log!("show_user_list called with search text: {}", search_text);
+        log!("Current room members count: {}", self.room_members.len());
+
+        command_input.clear_items(cx);
+
+        // Add debug logging for popup visibility
+        let popup_visible = command_input.view(id!(popup)).visible();
+        log!("Popup visibility before update: {}", popup_visible);
+
+        if !search_text.is_empty() || command_input.text().ends_with('@') {
+            command_input.view(id!(popup)).set_visible(true);
+
+            // Filter and create items
+            let filtered_users = self.room_members.iter()
+                .filter(|member| {
+                    let display_name = member.display_name()
+                        .map(|n| n.to_string())
+                        .unwrap_or_else(|| member.user_id().to_string());
+                    display_name.to_lowercase().contains(&search_text.to_lowercase())
+                });
+
+            // Add filtered users to the list
+            for member in filtered_users {
+                if let Some(item) = self.create_user_list_item(cx, member,
+                    &member.display_name()
+                        .map(|n| n.to_string())
+                        .unwrap_or_else(|| member.user_id().to_string())) {
+                    log!("Adding user item to list: {}", member.user_id());
+                    command_input.add_item(cx, item);
+                }
+            }
+
+            // Verify popup visibility after updates
+            let popup_visible_after = command_input.view(id!(popup)).visible();
+            log!("Popup visibility after update: {}", popup_visible_after);
+
+            self.redraw(cx);
+        } else {
+            command_input.view(id!(popup)).set_visible(false);
+            self.redraw(cx);
+        }
     }
 
-    fn update_user_list(&mut self, cx: &mut Cx, message_input: &mut CommandTextInputRef, search_text: &str) {
-        message_input.clear_items();
+    // 更新用户列表内容
+    fn update_user_list(&mut self, cx: &mut Cx, mut command_input: CommandInputBarRef, search_text: &str) {
+        log!("update_user_list called with search text: {}", search_text);
+        // Clear existing items
+        command_input.clear_items(cx);
 
-        // 只在搜索状态下显示用户列表
-        if self.is_searching {
-            let is_desktop = if cx.has_global::<DisplayContext>() {
-                cx.get_global::<DisplayContext>().is_desktop()
-            } else {
-                true
-            };
-
-            // 过滤并显示匹配的用户
-            for member in &self.room_members {
+        // Filter and add matching users
+        let filtered_users = self.room_members.iter()
+            .filter_map(|member| {
                 let display_name = member.display_name()
                     .map(|n| n.to_string())
                     .unwrap_or_else(|| member.user_id().to_string());
 
-                if display_name.to_lowercase().contains(search_text) {
-                    let item = WidgetRef::new_from_ptr(cx, self.user_list_item);
-
-                    item.label(id!(user_info.label)).set_text(&display_name);
-
-                    let matrix_url = format!("{}:matrix.org", member.user_id());
-                    item.label(id!(matrix_url)).set_text(&matrix_url);
-
-                    if is_desktop {
-                        item.apply_over(cx, live!(
-                            flow: Right,
-                            align: {y: 0.5}
-                        ));
-                        item.view(id!(user_info.filler)).set_visible(true);
-                    } else {
-                        item.apply_over(cx, live!(
-                            flow: Down,
-                            spacing: 4.0
-                        ));
-                        item.view(id!(user_info.filler)).set_visible(false);
-                        item.label(id!(matrix_url)).apply_over(cx, live!(
-                            margin: {left: 0.}
-                        ));
-                    }
-
-                    // 处理头像显示
-                    let avatar = item.avatar(id!(user_info.avatar));
-                    if let Some(mxc_uri) = member.avatar_url() {
-                        if let Some(avatar_data) = get_avatar(cx, mxc_uri) {
-                            avatar.show_image(None, |img| {
-                                utils::load_png_or_jpg(&img, cx, &avatar_data)
-                            });
-                        } else {
-                            avatar.show_text(None, &display_name);
-                        }
-                    } else {
-                        avatar.show_text(None, &display_name);
-                    }
-
-                    message_input.add_item(item);
+                if display_name.to_lowercase().contains(&search_text.to_lowercase()) {
+                    log!("Found matching user: {}", display_name);
+                    Some((member, display_name))
+                } else {
+                    None
                 }
+            });
+
+        // Add filtered users to the list
+        for (member, display_name) in filtered_users {
+            if let Some(item) = self.create_user_list_item(cx, member, &display_name) {
+                log!("Adding item for user: {}", display_name);
+                command_input.add_item(cx, item);
             }
         }
     }
 
+    fn create_user_list_item(&self, cx: &mut Cx, member: &RoomMember, display_name: &str) -> Option<WidgetRef> {
+        let item = WidgetRef::new_from_ptr(cx, self.user_list_item);
+
+        // 设置基本信息
+        item.label(id!(label)).set_text(display_name);
+        item.label(id!(matrix_url)).set_text(&format!("{}:matrix.org", member.user_id()));
+
+        // 设置外观样式
+        let is_desktop = cx.has_global::<DisplayContext>() &&
+            cx.get_global::<DisplayContext>().is_desktop();
+
+        if is_desktop {
+            item.apply_over(cx, live!(
+                flow: Right,
+                align: {y: 0.5}
+            ));
+            // item.view(id!(user_info.filler)).set_visible(true);
+        } else {
+            item.apply_over(cx, live!(
+                flow: Down,
+                spacing: 4.0
+            ));
+            // item.view(id!(user_info.filler)).set_visible(false);
+            item.label(id!(matrix_url)).apply_over(cx, live!(
+                margin: {left: 0.}
+            ));
+        }
+
+        // 设置头像
+        let avatar = item.avatar(id!(avatar));
+        if let Some(mxc_uri) = member.avatar_url() {
+            if let Some(avatar_data) = get_avatar(cx, mxc_uri) {
+                let _ = avatar.show_image(None, |img| {
+                    utils::load_png_or_jpg(&img, cx, &avatar_data)
+                });
+            } else {
+                avatar.show_text(None, display_name);
+            }
+        } else {
+            avatar.show_text(None, display_name);
+        }
+
+        Some(item)
+    }
+
+    // 公共接口方法
     pub fn text(&self) -> String {
-        self.command_text_input(id!(message_input))
+        self.command_input_bar(id!(message_input))
             .text_input_ref()
             .text()
     }
 
     pub fn set_text(&mut self, cx: &mut Cx, text: &str) {
-        self.command_text_input(id!(message_input))
+        self.command_input_bar(id!(message_input))
             .text_input_ref()
             .set_text_and_redraw(cx, text);
     }
 
     pub fn set_room_id(&mut self, room_id: OwnedRoomId) {
         self.room_id = Some(room_id.clone());
-
+        log!("Setting room id {} ", room_id.clone() );
         submit_async_request(MatrixRequest::FetchRoomMembers {
             room_id: room_id
         });
@@ -375,7 +402,7 @@ impl MentionInputBar {
     }
 }
 
-// Implement methods for component references
+// 组件引用的方法实现
 impl MentionInputBarRef {
     pub fn text(&self) -> Option<String> {
         self.borrow().map(|inner| inner.text())
@@ -394,6 +421,7 @@ impl MentionInputBarRef {
     }
 
     pub fn set_room_members(&self, members: Vec<RoomMember>) {
+        log!("Setting room members ref ... ");
         if let Some(mut inner) = self.borrow_mut() {
             inner.set_room_members(members);
         }
