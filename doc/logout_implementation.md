@@ -284,6 +284,26 @@ if let Some(client) = CLIENT.lock().unwrap().take() {
    - 不同模式（桌面/移动）切换下的logout测试
    - 程序退出时的资源清理验证
 
+## 已知问题和解决方案
+
+### Deadpool Panic问题
+Matrix SDK使用deadpool-sqlite内部连接池，在程序退出时可能导致panic。
+
+**根本原因**：
+- 依赖链：matrix-sdk -> matrix-sdk-sqlite -> rusqlite -> deadpool-sqlite -> deadpool-runtime
+- Matrix SDK没有提供优雅关闭连接池的方法
+
+**解决方案**：
+1. 正常logout时：资源被正常drop，不会造成内存泄漏
+2. 程序退出时：故意泄漏资源以避免panic，依赖操作系统回收内存
+
+### 线程局部析构函数问题
+用户资料缓存中包含Matrix SDK对象（如RoomMember），其析构函数需要Tokio runtime。
+
+**解决方案**：
+- 在泄漏Tokio runtime之前先清理用户资料缓存
+- 确保正确的清理顺序
+
 ## 未来改进建议
 
 1. **遥测数据收集**
@@ -301,3 +321,7 @@ if let Some(client) = CLIENT.lock().unwrap().take() {
 4. **恢复机制增强**
    - 更细粒度的错误恢复
    - 自动重试机制
+
+5. **Matrix SDK改进**
+   - 等待Matrix SDK提供更好的资源清理接口
+   - 移除程序退出时的资源泄漏workaround
