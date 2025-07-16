@@ -36,6 +36,8 @@ use crate::{
     }, room::RoomPreviewAvatar, shared::{html_or_plaintext::MatrixLinkPillState, jump_to_bottom_button::UnreadMessageCount, popup_list::{enqueue_popup_notification, PopupItem}}, utils::{self, AVATAR_THUMBNAIL_FORMAT}, verification::add_verification_event_handlers_and_sync_client
 };
 
+// State machine module is included below after the necessary functions are defined
+
 #[derive(Parser, Debug, Default)]
 struct Cli {
     /// The user ID to login with.
@@ -442,16 +444,20 @@ async fn async_worker(
             }
 
             MatrixRequest::Logout { is_desktop } => {
+                log!("Received MatrixRequest::Logout, is_desktop={}", is_desktop);
                 let _logout_task = Handle::current().spawn(async move {
-                    match logout_and_refresh(is_desktop).await {
+                    log!("Starting logout task");
+                    // Use the state machine implementation
+                    match crate::login::logout_state_machine::logout_with_state_machine(is_desktop).await {
                         Ok(()) => {
-                            log!("need to relogin");
+                            log!("Logout completed successfully via state machine");
                         },
                         Err(e) => {
-                            error!("Logout and refresh failed: {e:?}");
-                            enqueue_popup_notification(PopupItem { message: format!("Logout failed: {e}"), auto_dismissal_duration: None });
+                            error!("Logout failed: {e:?}");
+                            // Error handling is done within the state machine
                         }
                     }
+                    log!("Logout task finished");
                 });
             }
 
@@ -1157,11 +1163,11 @@ async fn async_worker(
 
 
 /// The single global Tokio runtime that is used by all async tasks.
-static TOKIO_RUNTIME: Mutex<Option<tokio::runtime::Runtime>> = Mutex::new(None);
+pub(crate) static TOKIO_RUNTIME: Mutex<Option<tokio::runtime::Runtime>> = Mutex::new(None);
 
 /// The sender used by [`submit_async_request`] to send requests to the async worker thread.
 /// Currently there is only one, but it can be cloned if we need more concurrent senders.
-static REQUEST_SENDER: Mutex<Option<UnboundedSender<MatrixRequest>>> = Mutex::new(None);
+pub(crate) static REQUEST_SENDER: Mutex<Option<UnboundedSender<MatrixRequest>>> = Mutex::new(None);
 
 /// A client object that is proactively created during initialization
 /// in order to speed up the client-building process when the user logs in.
@@ -1231,14 +1237,24 @@ pub fn start_matrix_tokio() -> Result<()> {
                 result = &mut worker_join_handle => {
                     match result {
                         Ok(Ok(())) => {
-                            error!("BUG: async worker task ended unexpectedly!");
+                            // Check if this is due to logout
+                            if LOGOUT_IN_PROGRESS.load(Ordering::Acquire) {
+                                log!("async worker task ended due to logout");
+                            } else {
+                                error!("BUG: async worker task ended unexpectedly!");
+                            }
                         }
                         Ok(Err(e)) => {
-                            error!("Error: async worker task ended:\n\t{e:?}");
-                            rooms_list::enqueue_rooms_list_update(RoomsListUpdate::Status {
-                                status: e.to_string(),
-                            });
-                            enqueue_popup_notification(PopupItem { message: format!("Rooms list update error: {e}"), auto_dismissal_duration: None });
+                            // Check if this is due to logout
+                            if LOGOUT_IN_PROGRESS.load(Ordering::Acquire) {
+                                log!("async worker task ended with error due to logout: {e:?}");
+                            } else {
+                                error!("Error: async worker task ended:\n\t{e:?}");
+                                rooms_list::enqueue_rooms_list_update(RoomsListUpdate::Status {
+                                    status: e.to_string(),
+                                });
+                                enqueue_popup_notification(PopupItem { message: format!("Rooms list update error: {e}"), auto_dismissal_duration: None });
+                            }
                         },
                         Err(e) => {
                             error!("BUG: failed to join async worker task: {e:?}");
@@ -1260,7 +1276,7 @@ pub type TimelineRequestSender = watch::Sender<Vec<BackwardsPaginateUntilEventRe
 
 
 /// Backend-specific details about a joined room that our client currently knows about.
-struct JoinedRoomDetails {
+pub(crate) struct JoinedRoomDetails {
     #[allow(unused)]
     room_id: OwnedRoomId,
     /// A reference to this room's timeline of events.
@@ -1304,16 +1320,16 @@ impl Drop for JoinedRoomDetails {
 
 
 /// Information about all joined rooms that our client currently know about.
-static ALL_JOINED_ROOMS: Mutex<BTreeMap<OwnedRoomId, JoinedRoomDetails>> = Mutex::new(BTreeMap::new());
+pub(crate) static ALL_JOINED_ROOMS: Mutex<BTreeMap<OwnedRoomId, JoinedRoomDetails>> = Mutex::new(BTreeMap::new());
 
 /// Information about all of the rooms that have been tombstoned.
 ///
 /// The map key is the **NEW** replacement room ID, and the value is the **OLD** tombstoned room ID.
 /// This allows us to quickly query if a newly-encountered room is a replacement for an old tombstoned room.
-static TOMBSTONED_ROOMS: Mutex<BTreeMap<OwnedRoomId, OwnedRoomId>> = Mutex::new(BTreeMap::new());
+pub(crate) static TOMBSTONED_ROOMS: Mutex<BTreeMap<OwnedRoomId, OwnedRoomId>> = Mutex::new(BTreeMap::new());
 
 /// The logged-in Matrix client, which can be freely and cheaply cloned.
-static CLIENT: Mutex<Option<Client>> = Mutex::new(None);
+pub(crate) static CLIENT: Mutex<Option<Client>> = Mutex::new(None);
 
 pub fn get_client() -> Option<Client> {
     CLIENT.lock().unwrap().clone()
@@ -1328,7 +1344,7 @@ pub fn current_user_id() -> Option<OwnedUserId> {
 
 /// The singleton sync service.
 /// sync_service if build from the client, and is used to sync the client with the server.
-static SYNC_SERVICE: Mutex<Option<Arc<SyncService>>> = Mutex::new(None);
+pub(crate) static SYNC_SERVICE: Mutex<Option<Arc<SyncService>>> = Mutex::new(None);
 
 /// Get a clone of the sync service, if available.
 pub fn get_sync_service() -> Option<Arc<SyncService>> {
@@ -1338,7 +1354,7 @@ pub fn get_sync_service() -> Option<Arc<SyncService>> {
 /// The list of users that the current user has chosen to ignore.
 /// Ideally we shouldn't have to maintain this list ourselves,
 /// but the Matrix SDK doesn't currently properly maintain the list of ignored users.
-static IGNORED_USERS: Mutex<BTreeSet<OwnedUserId>> = Mutex::new(BTreeSet::new());
+pub(crate) static IGNORED_USERS: Mutex<BTreeSet<OwnedUserId>> = Mutex::new(BTreeSet::new());
 
 /// Returns a deep clone of the current list of ignored users.
 pub fn get_ignored_users() -> BTreeSet<OwnedUserId> {
@@ -2915,6 +2931,9 @@ impl UserPowerLevels {
 /// where aborting the logout operation is no longer safe.
 pub static LOGOUT_POINT_OF_NO_RETURN: AtomicBool = AtomicBool::new(false);
 
+/// Global atomic flag indicating if logout is in progress
+pub static LOGOUT_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
+
 /// Logs out the current user and prepares the application for a new login session.
 ///
 /// Performs server-side logout, cleans up client state, closes all tabs, 
@@ -3088,7 +3107,7 @@ async fn logout_and_refresh(is_desktop :bool) -> Result<()> {
 
 }
 
-async fn shutdown_background_tasks() {
+pub async fn shutdown_background_tasks() {
     let mut rt_guard = TOKIO_RUNTIME.lock().unwrap();
     if let Some(existing_rt) = rt_guard.take() {
         existing_rt.shutdown_background();
