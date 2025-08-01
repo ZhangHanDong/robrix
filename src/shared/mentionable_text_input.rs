@@ -399,12 +399,17 @@ impl Widget for MentionableTextInput {
                 // Handle TextInput changes
                 if let Some(widget_action) = action.as_widget_action() {
                     if widget_action.widget_uid == text_input_uid {
-                        if let TextInputAction::Changed(text) = widget_action.cast() {
-                            if has_focus {
-                                self.handle_text_change(cx, scope, text.to_owned());
+                        match widget_action.cast() {
+                            TextInputAction::Changed(text) => {
+                                if has_focus {
+                                    self.handle_text_change(cx, scope, text.to_owned());
+                                }
                             }
-                            continue; // Continue processing other actions
-                        }
+                            TextInputAction::KeyFocusLost => {
+                                self.close_mention_popup(cx);
+                            }
+                            _ => {}
+                        }                        
                     }
                 }
 
@@ -456,6 +461,15 @@ impl Widget for MentionableTextInput {
                         self.update_user_list(cx, &search_text, scope);
                     }
                 }
+            }
+        }
+        
+        if let Event::KeyDown(KeyEvent { key_code: KeyCode::Escape, ..}) = event {
+            let text_input = self.cmd_text_input.text_input(id!(text_input));
+            let text_input_area = text_input.area();
+            let is_focused = cx.has_key_focus(text_input_area);
+            if is_focused {
+                self.close_mention_popup(cx);
             }
         }
     }
@@ -548,7 +562,7 @@ impl MentionableTextInput {
     fn add_user_mention_items(
         &mut self,
         cx: &mut Cx,
-        matched_members: Vec<(String, RoomMember)>,
+        matched_members: &[(String, RoomMember)],
         user_items_limit: usize,
         is_desktop: bool,
     ) -> usize {
@@ -556,7 +570,7 @@ impl MentionableTextInput {
 
         for (index, (display_name, member)) in matched_members.into_iter().take(user_items_limit).enumerate() {
             let Some(user_list_item_ptr) = self.user_list_item else { 
-                log!("user_list_item_ptr is None!");
+                log!("user_list_item_ptr is None for member: {}", member.user_id());
                 continue;
             };
             let item = WidgetRef::new_from_ptr(cx, Some(user_list_item_ptr));
@@ -793,7 +807,6 @@ impl MentionableTextInput {
         let mut search_text = String::new();
         let mut any_results = false;
         let mut should_update_ui = false;
-        let mut new_results = Vec::new();
 
         // Process all available results from the channel
         if let Some(receiver) = &self.search_receiver {
@@ -804,17 +817,12 @@ impl MentionableTextInput {
                 
                 // Collect results
                 if !result.results.is_empty() {
-                    new_results.extend(result.results);
+                    self.accumulated_results.extend(result.results);
                     should_update_ui = true;
                 }
             }
         } else {
             return;
-        }
-        
-        // Add new results to accumulated results
-        if !new_results.is_empty() {
-            self.accumulated_results.extend(new_results);
         }
         
         // Update UI immediately if we got new results
@@ -886,7 +894,6 @@ impl MentionableTextInput {
                                 
                                 let is_desktop = cx.display_context.is_desktop();
                                 let max_visible_items = if is_desktop { 10 } else { 5 };
-                                
                                 // Submit the search request with cached members
                                 submit_async_request(MatrixRequest::SearchRoomMembers {
                                     room_id: room_props.room_id.clone(),
@@ -934,7 +941,7 @@ impl MentionableTextInput {
 
         // Add user mention items
         let user_items_limit = max_visible_items.saturating_sub(has_room_item as usize);
-        let user_items_added = self.add_user_mention_items(cx, results.to_vec(), user_items_limit, is_desktop);
+        let user_items_added = self.add_user_mention_items(cx, results, user_items_limit, is_desktop);
         items_added += user_items_added;
 
         // Update popup visibility based on whether we have items
@@ -994,7 +1001,6 @@ impl MentionableTextInput {
             // Create a new channel for this search
             let (sender, receiver) = std::sync::mpsc::channel();
             self.search_receiver = Some(receiver);
-
             // Submit background search request
             submit_async_request(MatrixRequest::SearchRoomMembers {
                 room_id: room_props.room_id.clone(),

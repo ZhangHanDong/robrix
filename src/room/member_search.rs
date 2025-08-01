@@ -22,7 +22,8 @@ pub fn search_room_members_streaming(
     
     // Constants for batching
     const BATCH_SIZE: usize = 10;  // Send results in batches
-    
+    const SEARCH_BUFFER_MULTIPLIER: usize = 3;
+
     // For empty search, return all members (up to max_results)
     if search_text.is_empty() {
         let mut all_results = Vec::new();
@@ -89,7 +90,7 @@ pub fn search_room_members_streaming(
     }
     
     // Collect all matching results with their priorities
-    let mut all_matches: Vec<(u8, String, RoomMember)> = Vec::new();
+    let mut all_matches: Vec<(u8, String, RoomMember)> = Vec::with_capacity(max_results * SEARCH_BUFFER_MULTIPLIER);
     
     for member in members.iter() {
         // Skip the current user - users should not be able to mention themselves
@@ -110,12 +111,11 @@ pub fn search_room_members_streaming(
             all_matches.push((priority, display_name, member.clone()));
             
             // Stop collecting after we have enough matches
-            if all_matches.len() >= max_results * 3 {
+            if all_matches.len() >= max_results * SEARCH_BUFFER_MULTIPLIER {
                 break;
             }
         }
     }
-    
     
     // Sort all results by priority
     all_matches.sort_by_key(|(priority, _, _)| *priority);
@@ -136,7 +136,6 @@ pub fn search_room_members_streaming(
         
         sent_count = batch_end;
         let is_last_batch = sent_count >= total_results;
-        
         
         let search_result = SearchResult {
             results: batch,
